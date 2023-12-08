@@ -1,0 +1,5 @@
+scx (0.1.1-1ubuntu1) noble; urgency=medium
+
+  * Initial packaging.
+
+ -- Andrea Righi <andrea.righi@canonical.com>  Fri, 08 Dec 2023 08:24:12 +0000

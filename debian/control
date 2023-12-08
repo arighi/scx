@@ -1,0 +1,21 @@
+Source: scx
+Section: misc
+Priority: optional
+Maintainer: Andrea Righi <andrea.righi@canonical.com>
+Standards-Version: 4.5.1
+Build-Depends: debhelper (>= 11), fakeroot,
+ linux-libc-dev, linux-tools-common, linux-tools-generic,
+ linux-unstable-tools-6.7.0-2,
+ libbpf-dev (>= 1.3.0),
+ cmake, pkgconf, cargo, rustc, clang, meson
+Homepage: https://github.com/sched-ext/scx
+Vcs-Git:  https://github.com/sched-ext/scx
+
+Package: scx
+Architecture: amd64 arm64 armhf ppc64el s390x
+Depends:
+ ${shlibs:Depends},
+Description: sched_ext schedulers and tools
+ sched_ext is a Linux kernel feature which enables implementing kernel thread
+ schedulers in BPF and dynamically loading them. This package contains various
+ scheduler implementations and support utilities.
