@@ -1,3 +1,23 @@
+scx (0.1.2-1ubuntu1) noble; urgency=medium
+
+  * New upstream version 0.1.2:
+    - Update readme with alt meson install instructions by @jordalgo in #16
+    - Support offline compilation by @htejun in #17
+    - scx_nest: Reset schedulings when a task is dispatched by @Decave in #18
+    - build scx on 32-bit architectures by @arighi in #21
+    - scx_rusty: fix "subtract with overflow" error by @arighi in #20
+    - build: introduce enable_rust build option by @arighi in #22
+    - build: add Debian arch name mapping for s390 by @arighi in #23
+    - README: Add ubuntu instructions by @htejun in #24
+    - Update README for ubuntu instructions by @jordalgo in #25
+    - scx_central: Break dispatch_to_cpu loop when running out of buffer slots
+      by @kkdwivedi in #26
+    - rust: clarify license and include text by @davide125 in #27
+    - Bump versions and add LICENSE symlinks for scx_layered and scx_rusty by
+      @htejun in #28
+
+ -- Andrea Righi <andrea.righi@canonical.com>  Wed, 13 Dec 2023 07:36:50 +0100
+
 scx (0.1.1-1ubuntu1) noble; urgency=medium
 
   * Initial packaging.

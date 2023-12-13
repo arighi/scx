@@ -5,7 +5,7 @@ Maintainer: Andrea Righi <andrea.righi@canonical.com>
 Standards-Version: 4.5.1
 Build-Depends: debhelper (>= 11), fakeroot,
  linux-libc-dev, linux-tools-common, linux-tools-generic,
- linux-unstable-tools-6.7.0-2,
+ linux-unstable-tools-6.7.0-3,
  libbpf-dev (>= 1.3.0),
  cmake, pkgconf, cargo, rustc, clang, meson
 Homepage: https://github.com/sched-ext/scx
