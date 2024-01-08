@@ -318,11 +318,14 @@ impl<'a> Scheduler<'a> {
     fn scale_slice_ns(&mut self) {
         let nr_queued = *self.bpf.nr_queued_mut();
         let nr_scheduled = *self.bpf.nr_scheduled_mut();
-        let nr_waiting = nr_queued + nr_scheduled;
         let nr_cpus = self.bpf.get_nr_cpus() as u64;
+        let nr_tasks = nr_cpus + nr_queued + nr_scheduled;
 
-        // Scale time slice, but never scale below 1 ms.
-        let scaling = nr_waiting / nr_cpus + 1;
+        // Scale time slice based on the amount of (potential) running tasks and waiting tasks
+        // (rounding up).
+        let scaling = (nr_tasks + nr_cpus - 1) / nr_cpus;
+
+        // Make sure we never scale below 1ms.
         let slice_us = (self.slice_ns / scaling / 1000).max(1000);
 
         // Apply new scaling.
