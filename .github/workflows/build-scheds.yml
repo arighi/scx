@@ -11,8 +11,8 @@ jobs:
       - run: echo 'debconf debconf/frontend select Noninteractive' | sudo debconf-set-selections
 
       # Add sched-ext external ppa to get the latest sched-ext kernel
-      - run: sudo add-apt-repository -n -y ppa:arighi/sched-ext
-      - run: sudo sed -i s/jammy/noble/ /etc/apt/sources.list.d/arighi-ubuntu-sched-ext-jammy.list
+      - run: sudo add-apt-repository -n -y ppa:arighi/sched-ext-unstable
+      - run: sudo sed -i s/jammy/noble/ /etc/apt/sources.list.d/arighi-ubuntu-sched-ext-unstable-jammy.list
 
       # Refresh packages list
       - run: sudo apt update
