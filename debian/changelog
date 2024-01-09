@@ -1,3 +1,49 @@
+scx (0.1.5-1ubuntu1) noble; urgency=medium
+
+  * New upstream version 0.1.5:
+    - scx_rustland: add documentation to scheds/rust/README.md by @arighi in #55
+    - scx_rustland: reduce scheduler overhead by @arighi in #56
+    - scx_rustland: improve scheduler cpu selection by @arighi in #57
+    - scx_rustland: prevent dispatching multiple tasks on the same idle cpu by @arighi in #58
+    - scx_rustland: lowlatency improvements by @arighi in #59
+    - scx_rustland: prevent starvation and improve responsiveness by @arighi in #60
+    - scx_rustland: notify user-space scheduler about exiting tasks by @arighi in #61
+    - test the schedulers in the github workflow using virtme-ng by @arighi in #51
+    - scheds: c: improve build portability by @arighi in #62
+    - Userland scheduler updates by @Decave in #63
+    - scx_rustland: improve interactive workloads by @arighi in #64
+    - Add new archs for bpf_builder by @jordalgo in #65
+    - Improve scx_rustland reliability by @arighi in #66
+    - Add README files for each rust scheduler by @jordalgo in #67
+    - scx_rustland: refactoring by @arighi in #68
+    - bump scx_rusty and scx_layered by @jordalgo in #71
+    - scx_rustland: enhancements by @arighi in #72
+    - scx_rustland: dynamic time slice by @arighi in #73
+    - scx_rustland: multicore fixes by @arighi in #74
+    - scx: Build fix after kernel update by @htejun in #75
+    - Bump versions by @htejun in #76
+
+  * Miscellaneous Ubuntu changes:
+   - scx_rustland: report user-space scheduler page fault counter
+   - scx_userland: use a custom memory allocator to prevent page faults
+   - scx_rustland: remove obsolete TODO note
+   - scx_rustland: add a troubleshooting section
+   - scx_rustland: voluntary context switch boost
+   - scx_rustland: expose voluntary context switches to the scheduler
+   - Update README.md to include terraria video
+   - Update README.md
+   - scx_flatcg: Fix fallout from direct dispatch API update
+   - scx_flatcg: Report pick_next_cgroup() race and fail counts
+   - scx_flatcg: introduce CGROUP_MAX_RETRIES
+   - scx_rustland: introduce time slice boost parameter
+   - scx_rustland: avoid using SCX_ENQ_PREEMPT
+   - ci: temporarily switch to ppa:arighi/sched-ext-unstable
+   - scx_rustland: improve dynamic slice scaling
+   - scx_rustland: get rid of force_local
+   - scx_rustland: add a link to the live demo in the README
+
+ -- Andrea Righi <andrea.righi@canonical.com>  Tue, 09 Jan 2024 19:00:27 +0100
+
 scx (0.1.4-1ubuntu1) noble; urgency=medium
 
   * New upstream version 0.1.4:
