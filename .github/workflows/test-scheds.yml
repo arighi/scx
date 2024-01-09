@@ -1,8 +1,8 @@
-name: build-scheds
+name: test-scheds
 run-name: ${{ github.actor }} PR run
 on: [pull_request, push]
 jobs:
-  build-schedulers:
+  test-schedulers:
     runs-on: ubuntu-22.04
     steps:
       ### OTHER REPOS ####
@@ -51,7 +51,7 @@ jobs:
       # Install virtme-ng
       - run: pip install virtme-ng
 
-      # Download a sched-ext enabled kernel
+      # Download a sched-ext enabled kernel to test the schedulers
       - run: apt download linux-image-unsigned-6.7.0-3-generic linux-modules-6.7.0-3-generic
       - run: mkdir -p kernel
       - run: for f in *.deb; do dpkg -x $f kernel; done
@@ -62,5 +62,5 @@ jobs:
       - run: meson setup build -Dlibbpf_a=`pwd`/libbpf/src/libbpf.a -Dkernel=$(pwd)/$(ls -c1 kernel/boot/vmlinuz* | tail -1)
       - run: meson compile -C build
 
-      # Test schedulers
+      # Run schedulers inside virtme-ng
       - run: meson compile -C build test_sched
