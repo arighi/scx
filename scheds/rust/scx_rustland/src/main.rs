@@ -344,10 +344,10 @@ impl<'a> Scheduler<'a> {
         // per seconds.
         //
         // NOTE: we should probably make the (delta_nvcsw / delta_t) threshold a tunable, but for
-        // now let's assume that 1 voluntary context switch over the last 10 seconds is enough to
-        // assume that the task is interactive.
+        // now let's assume that an average of 1 voluntary context switch per second over a time
+        // window of 10 seconds is enough to assume that the task is interactive.
         fn is_interactive_task(delta_nvcsw: u64, delta_ns: u64) -> bool {
-            delta_nvcsw / (delta_ns / (10 * NSEC_PER_SEC)).max(1) > 0
+            delta_nvcsw / (delta_ns / NSEC_PER_SEC).max(1) > 0
         }
 
         // Evaluate last time slot used by the task.
