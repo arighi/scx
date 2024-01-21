@@ -169,7 +169,7 @@ impl Task {
         DispatchedTask {
             pid: self.pid,
             cpu: self.cpu,
-            payload: self.vruntime,
+            vtime: self.vruntime,
         }
     }
 }

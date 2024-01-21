@@ -84,7 +84,7 @@ const SCHED_EXT: i32 = 7;
 ///                             &DispatchedTask {
 ///                                 pid: task.pid,
 ///                                 cpu: task.cpu,
-///                                 payload: 0,
+///                                 vtime: 0,
 ///                             }
 ///                         );
 ///                     }
@@ -150,7 +150,7 @@ pub struct QueuedTask {
 pub struct DispatchedTask {
     pub pid: i32,     // pid that uniquely identifies a task
     pub cpu: i32,     // target CPU selected by the scheduler
-    pub payload: u64, // task payload (used for debugging)
+    pub vtime: u64,   // task vruntime
 }
 
 // Message received from the dispatcher (see bpf_intf::queued_task_ctx for details).
@@ -191,7 +191,7 @@ impl DispatchedMessage {
         let dispatched_task_struct = bpf_intf::dispatched_task_ctx {
             pid: task.pid,
             cpu: task.cpu,
-            payload: task.payload,
+            vtime: task.vtime,
         };
         DispatchedMessage {
             inner: dispatched_task_struct,

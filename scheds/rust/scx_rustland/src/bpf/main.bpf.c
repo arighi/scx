@@ -66,6 +66,11 @@ const volatile u64 slice_ns = SCX_SLICE_DFL; /* Base time slice duration */
 volatile u64 effective_slice_ns;
 
 /*
+ * Current BPF vruntime.
+ */
+static volatile u64 vtime_now;
+
+/*
  * Number of tasks that are queued for scheduling.
  *
  * This number is incremented by the BPF component when a task is queued to the
@@ -258,15 +263,14 @@ static bool is_usersched_needed(void)
 	return nr_queued || nr_scheduled;
 }
 
-/*
- * Dispatch a task on its local per-CPU FIFO.
- */
-static void dispatch_local(struct task_struct *p, u64 enq_flags)
-{
-	s32 cpu = scx_bpf_task_cpu(p);
 
-	dbg_msg("dispatch: pid=%d (%s) cpu=local (%d)", p->pid, p->comm, cpu);
-	scx_bpf_dispatch(p, cpu, slice_ns, enq_flags);
+/*
+ * Compare two vruntime values, return true if the first one is less than the
+ * second one, false otherwise.
+ */
+static inline bool vtime_before(u64 a, u64 b)
+{
+	return (s64)(a - b) < 0;
 }
 
 /*
@@ -310,9 +314,11 @@ static s32 get_task_cpu(struct task_struct *p, s32 cpu)
  * previously used one, if that one is also not usable dispatch to the global
  * DSQ.
  */
-static void dispatch_task(struct task_struct *p, s32 cpu, u64 enq_flags)
+static void
+dispatch_task(struct task_struct *p, s32 cpu, u64 enq_flags)
 {
 	u64 slice = __sync_fetch_and_add(&effective_slice_ns, 0) ? : slice_ns;
+	u64 vtime = p->scx.dsq_vtime;
 
 	cpu = get_task_cpu(p, cpu);
 	if (cpu < 0) {
@@ -332,7 +338,17 @@ static void dispatch_task(struct task_struct *p, s32 cpu, u64 enq_flags)
 		return;
 	}
 	dbg_msg("dispatch: pid=%d (%s) cpu=%ld", p->pid, p->comm, cpu);
-	scx_bpf_dispatch(p, cpu, slice, enq_flags);
+	scx_bpf_dispatch_vtime(p, cpu, slice, vtime, enq_flags);
+}
+
+/*
+ * Dispatch a task on its local per-CPU FIFO.
+ */
+static void dispatch_local(struct task_struct *p, u64 enq_flags)
+{
+	s32 cpu = scx_bpf_task_cpu(p);
+
+	dispatch_task(p, cpu, enq_flags);
 }
 
 /*
@@ -514,8 +530,13 @@ void BPF_STRUCT_OPS(rustland_dispatch, s32 cpu, struct task_struct *prev)
 		 * Check whether the scheduler assigned a different CPU to the
 		 * task and migrate (if possible).
 		 */
-		dbg_msg("usersched: pid=%d cpu=%d payload=%llu",
-			task.pid, task.cpu, task.payload);
+		dbg_msg("usersched: pid=%d cpu=%d vtime=%llu",
+			task.pid, task.cpu, task.vtime);
+		/*
+		 * Update task vruntime with the value determined by the
+		 * user-space scheduler.
+		 */
+		p->scx.dsq_vtime = task.vtime;
 		dispatch_task(p, task.cpu, 0);
 		bpf_task_release(p);
 		__sync_fetch_and_add(&nr_user_dispatches, 1);
@@ -550,6 +571,10 @@ void BPF_STRUCT_OPS(rustland_running, struct task_struct *p)
 	 */
 	if (!is_usersched_task(p))
 		set_cpu_owner(cpu, p->pid);
+
+	/* Make sure the global BPF vruntime always moves forward. */
+	if (vtime_before(vtime_now, p->scx.dsq_vtime))
+		vtime_now = p->scx.dsq_vtime;
 }
 
 /*
@@ -557,6 +582,7 @@ void BPF_STRUCT_OPS(rustland_running, struct task_struct *p)
  */
 void BPF_STRUCT_OPS(rustland_stopping, struct task_struct *p, bool runnable)
 {
+	u64 slice = __sync_fetch_and_add(&effective_slice_ns, 0) ? : slice_ns;
 	s32 cpu = scx_bpf_task_cpu(p);
 
 	dbg_msg("stop: pid=%d (%s) cpu=%ld", p->pid, p->comm, cpu);
@@ -565,6 +591,24 @@ void BPF_STRUCT_OPS(rustland_stopping, struct task_struct *p, bool runnable)
 	 */
 	if (!is_usersched_task(p))
 		set_cpu_owner(scx_bpf_task_cpu(p), 0);
+
+	/*
+	 * Update vruntime for tasks that are dispatched directly, bypassing
+	 * the user-space scheduler.
+	 *
+	 * This value will be overwritten for tasks processed by the user-space
+	 * scheduler.
+	 */
+	if (slice > p->scx.slice)
+		p->scx.dsq_vtime += (slice - p->scx.slice) * 100 / p->scx.weight;
+}
+
+/*
+ * Task @p is now attached to the SCHED_EXT class: initialize its vruntime.
+ */
+void BPF_STRUCT_OPS(rustland_enable, struct task_struct *p)
+{
+	p->scx.dsq_vtime = vtime_now;
 }
 
 /*
@@ -743,6 +787,7 @@ struct sched_ext_ops rustland = {
 	.dispatch		= (void *)rustland_dispatch,
 	.running		= (void *)rustland_running,
 	.stopping		= (void *)rustland_stopping,
+	.enable			= (void *)rustland_enable,
 	.update_idle		= (void *)rustland_update_idle,
 	.exit_task		= (void *)rustland_exit_task,
 	.init			= (void *)rustland_init,
