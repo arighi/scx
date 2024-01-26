@@ -1,3 +1,37 @@
+scx (0.1.6-1ubuntu1) noble; urgency=medium
+
+  * New upstream version 0.1.6:
+    - scx_rustland: small updates by @arighi in #77
+    - ci: temporarily switch to ppa:arighi/sched-ext-unstable by @arighi in #78
+    - scx_rustland: time slice boost by @arighi in #81
+    - scx_flatcg: introduce CGROUP_MAX_RETRIES by @arighi in #80
+    - scx_flatcg: Fix fallout from direct dispatch API update by @htejun in #82
+    - scx_rustland: Update README.md by @htejun in #83
+    - Update README.md to include terraria video by @htejun in #84
+    - scx_rustland: voluntary context switch boost by @arighi in #85
+    - scx_rustland: remove obsolete TODO note by @arighi in #86
+    - scx_userland: use a custom memory allocator to prevent page faults by @arighi in #87
+    - scx_rustland: introduce SMT support by @arighi in #90
+    - Add systemd services for scx schedulers by @sirlucjan in #88
+    - scx_rustland: introduce dynamic slice boost by @arighi in #91
+    - scx_nest: Set timer callback after cancelling by @Decave in #92
+    - scx-rustland: SMT improvements by @arighi in #94
+    - Set log size to 10M by @sirlucjan in #93
+    - ci: test the shedulers with the latest sched-ext kernel by @arighi in #95
+    - Set the correct value for sched-ext journald namespace by @sirlucjan in #97
+    - Update descriptions in cargo toml files by @jordalgo in #98
+    - scx_rustland: fixes to improve scheduler stability by @arighi in #99
+    - Add README.md for systemd services by @sirlucjan in #100
+    - systemd-services: replace ConditionPathExists with ConditionPathIsDirectory by @sirlucjan in #102
+    - Update vmlinux.h by @dschatzberg in #103
+    - user_exit_info: Print out debug dump if available by @htejun in #104
+    - scx_layered: Add support for OpenMetrics format by @dschatzberg in #101
+
+  * Miscellaneous Ubuntu changes:
+   - debian: disable systemd services by default
+
+ -- Andrea Righi <andrea.righi@canonical.com>  Fri, 26 Jan 2024 17:49:30 +0100
+
 scx (0.1.5-1ubuntu1) noble; urgency=medium
 
   * New upstream version 0.1.5:
