@@ -15,7 +15,9 @@ endif
 	dh $@
 
 override_dh_auto_configure:
-	meson setup debian/build --prefix=$(CURDIR)/debian/scx/usr \
+	meson setup debian/build \
+		--prefix=/usr \
+		--datadir=$(CURDIR)/debian/scx/usr \
 		-Dbpftool=$(BPFTOOL) -Dcargo_home=$(CURDIR)/cargo-deps \
 		-Doffline=true -Dbuildtype=release $(MESON_EXTRA_OPTS)
 
@@ -26,7 +28,7 @@ override_dh_auto_test:
 	dh_auto_test
 
 override_dh_auto_install:
-	meson install -C debian/build
+	meson install -C debian/build --destdir $(CURDIR)/debian/scx
 
 override_dh_install:
 	# Install all binaries to /usr/sbin

@@ -1,0 +1,8 @@
+#!/bin/sh
+
+set -e
+
+for f in /lib/systemd/system/scx_*; do
+    service=$(basename $f)
+    systemctl disable ${service} || true
+done
