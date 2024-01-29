@@ -11,6 +11,7 @@
 #include <bpf/bpf.h>
 #include <scx/common.h>
 #include "scx_simple.bpf.skel.h"
+#include "scx_simple.h"
 
 const char help_fmt[] =
 "A simple sched_ext scheduler.\n"
@@ -19,7 +20,6 @@ const char help_fmt[] =
 "\n"
 "Usage: %s [-f] [-p]\n"
 "\n"
-"  -f            Use FIFO scheduling instead of weighted vtime scheduling\n"
 "  -p            Switch only tasks on SCHED_EXT policy intead of all\n"
 "  -h            Display this help and exit\n";
 
@@ -30,28 +30,27 @@ static void sigint_handler(int simple)
 	exit_req = 1;
 }
 
-static void read_stats(struct scx_simple *skel, __u64 *stats)
+static void read_stats(struct scx_simple *skel, __u64 *stats, int nr_cpus)
 {
-	int nr_cpus = libbpf_num_possible_cpus();
-	__u64 cnts[2][nr_cpus];
-	__u32 idx;
+	__u64 cnts[nr_cpus][nr_cpus] = {};
+	__u32 cpu;
 
-	memset(stats, 0, sizeof(stats[0]) * 2);
-
-	for (idx = 0; idx < 2; idx++) {
-		int ret, cpu;
+	for (cpu = 0; cpu < nr_cpus; cpu++) {
+		int ret, i;
 
 		ret = bpf_map_lookup_elem(bpf_map__fd(skel->maps.stats),
-					  &idx, cnts[idx]);
+					  &cpu, cnts[cpu]);
 		if (ret < 0)
 			continue;
-		for (cpu = 0; cpu < nr_cpus; cpu++)
-			stats[idx] += cnts[idx][cpu];
+
+		for (i = 0; i < nr_cpus; i++)
+			stats[cpu] += cnts[cpu][i];
 	}
 }
 
 int main(int argc, char **argv)
 {
+	int nr_cpus = libbpf_num_possible_cpus();
 	struct scx_simple *skel;
 	struct bpf_link *link;
 	__u32 opt;
@@ -64,11 +63,8 @@ int main(int argc, char **argv)
 	skel = scx_simple__open();
 	SCX_BUG_ON(!skel, "Failed to open skel");
 
-	while ((opt = getopt(argc, argv, "fph")) != -1) {
+	while ((opt = getopt(argc, argv, "ph")) != -1) {
 		switch (opt) {
-		case 'f':
-			skel->rodata->fifo_sched = true;
-			break;
 		case 'p':
 			skel->rodata->switch_partial = true;
 			break;
@@ -84,10 +80,12 @@ int main(int argc, char **argv)
 	SCX_BUG_ON(!link, "Failed to attach struct_ops");
 
 	while (!exit_req && !uei_exited(&skel->bss->uei)) {
-		__u64 stats[2];
+		__u64 stats[nr_cpus] = {};
+		int i;
 
-		read_stats(skel, stats);
-		printf("local=%llu global=%llu\n", stats[0], stats[1]);
+		read_stats(skel, stats, nr_cpus);
+		for (i = 0; i < nr_cpus; i++)
+			printf("cpu%d=%llu\n", i, stats[i]);
 		fflush(stdout);
 		sleep(1);
 	}
