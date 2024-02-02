@@ -349,6 +349,17 @@ static void dispatch_user_scheduler(void)
 }
 
 /*
+ * Return true if the target CPU is usable by task @p and if it's idle,
+ * according to the CPU ownership map, false otherwise.
+ */
+static bool is_cpu_idle(struct task_struct *p, s32 cpu)
+{
+	if (!bpf_cpumask_test_cpu(cpu, p->cpus_ptr))
+		return false;
+	return get_cpu_owner(cpu) == 0;
+}
+
+/*
  * Select the target CPU where a task can be executed.
  *
  * The idea here is to try to find an idle CPU in the system, and preferably
@@ -363,20 +374,12 @@ static void dispatch_user_scheduler(void)
 s32 BPF_STRUCT_OPS(rustland_select_cpu, struct task_struct *p, s32 prev_cpu,
 		   u64 wake_flags)
 {
-	bool is_idle = false;
-	s32 cpu;
-
-	cpu = scx_bpf_select_cpu_dfl(p, prev_cpu, wake_flags, &is_idle);
-	if (is_idle) {
-		/*
-		 * Using SCX_DSQ_LOCAL ensures that the task will be executed
-		 * directly on the CPU returned by this function.
-		 */
+	if (is_cpu_idle(p, prev_cpu)) {
 		dispatch_task(p, SCX_DSQ_LOCAL, 0);
 		__sync_fetch_and_add(&nr_kernel_dispatches, 1);
 	}
 
-	return cpu;
+	return prev_cpu;
 }
 
 /*
@@ -384,21 +387,21 @@ s32 BPF_STRUCT_OPS(rustland_select_cpu, struct task_struct *p, s32 prev_cpu,
  * scheduler.
  */
 static void get_task_info(struct queued_task_ctx *task,
-			  const struct task_struct *p, bool exiting)
+			  const struct task_struct *p, s32 cpu)
 {
 	task->pid = p->pid;
 	/*
 	 * Use a negative CPU number to notify that the task is exiting, so
 	 * that we can free up its resources in the user-space scheduler.
 	 */
-	if (exiting) {
+	if (cpu < 0) {
 		task->cpu = -1;
 		return;
 	}
 	task->sum_exec_runtime = p->se.sum_exec_runtime;
 	task->nvcsw = p->nvcsw;
 	task->weight = p->scx.weight;
-	task->cpu = scx_bpf_task_cpu(p);
+	task->cpu = cpu;
 }
 
 /*
@@ -448,7 +451,7 @@ void BPF_STRUCT_OPS(rustland_enqueue, struct task_struct *p, u64 enq_flags)
 	 * will be dispatched directly from the kernel (re-using their
 	 * previously used CPU in this case).
 	 */
-	get_task_info(&task, p, false);
+	get_task_info(&task, p, scx_bpf_task_cpu(p));
 	dbg_msg("enqueue: pid=%d (%s)", p->pid, p->comm);
 	if (bpf_map_push_elem(&queued, &task, 0)) {
 		sched_congested(p);
@@ -622,7 +625,7 @@ void BPF_STRUCT_OPS(rustland_exit_task, struct task_struct *p,
         struct queued_task_ctx task = {};
 
 	dbg_msg("exit: pid=%d (%s)", p->pid, p->comm);
-	get_task_info(&task, p, true);
+	get_task_info(&task, p, -1);
 	if (bpf_map_push_elem(&queued, &task, 0)) {
 		/*
 		 * We may have a memory leak in the scheduler at this point,
@@ -764,7 +767,7 @@ struct sched_ext_ops rustland = {
 	.exit_task		= (void *)rustland_exit_task,
 	.init			= (void *)rustland_init,
 	.exit			= (void *)rustland_exit,
-	.flags			= SCX_OPS_ENQ_LAST | SCX_OPS_KEEP_BUILTIN_IDLE,
+	.flags			= SCX_OPS_ENQ_LAST,
 	.timeout_ms		= 5000,
 	.name			= "rustland",
 };
