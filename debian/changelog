@@ -1,3 +1,60 @@
+scx (0.1.6.1-1ubuntu1) noble; urgency=medium
+
+  * Miscellaneous Ubuntu changes:
+    - scx_utils: use c_char to prevent build failures
+
+ -- Andrea Righi <andrea.righi@canonical.com>  Sun, 11 Feb 2024 20:35:50 +0100
+
+scx (0.1.6-2ubuntu1) noble; urgency=medium
+
+  * Resync with the latest upstream branch:
+    - scx_rustland: replace custom allocator with buddy-alloc
+    - scx_rustland: speed up search by PID in tasks BTreeSet
+    - scx_rustland: per-task cpumask generation counter
+    - scx: Implement solution to infeasible weights problem
+    - scx_rustland: keep default CPU selection when idle
+    - scx_rustland: kick user-space scheduler when a CPU is released
+    - scx_rustland: use scx_bpf_dispatch_cancel()
+    - scx_rustland: dump scheduler statistics before exiting
+    - scx_rusty: Fix typos
+    - scx: Add compat support for SCX_KICK_IDLE and use it for idle CPU wakeups
+    - scx: Update vmlinux.h to receive SCX_KICK_IDLE
+    - ci: detect errors only from stderr
+    - scx_userland: Increase scx_userland timeout
+    - ci: Only do CI runs for pull requests
+    - scx_userland: Print warning about poor performance
+    - Add linux-sched-ext to CachyOS repo
+    - common.bpf.h: Add kfunc prototype for scx_bpf_dispatch_cancel()
+    - scx_rustland: prevent duplicate PIDs in the task BTreeSet
+    - Include libbpf_h path in c sched compilation
+    - scheds/sync-to-kernel.sh: Drop most schedulers from sync
+    - docs: Update OVERVIEW to match latest APIs
+    - scx_rustland: more aggressive time slice scaling
+    - scx_rustland: enhance interactive task classification
+    - scx_rustland: rely on the built-in idle selection logic
+    - scx_rustland: usersched: code refactoring
+    - scx_rustland: BPF: refine CPU dispatch logic
+    - scx_rustland: re-introduce per-CPU DSQ + a global shared DSQ
+    - scx_rustland: BPF: small refactoring
+    - scx_rustland: Use scx_utils::user_exit_info
+    - scx_rusty: Use scx_utils::user_exit_info
+    - scx_layered: Use scx_utils::user_exit_info
+    - rust/scx_utils: Add user_exit_info support
+    - scx: Clean up user_exit_info.h
+    - scx_layered: dispatch from select_cpu if possible
+    - [scx_layered] downgrade prometheus-client
+    - Add BREAKING_CHANGES.md
+    - scx_layered: Grab idle_smtmask a bit later
+    - scx_layered: Remove unnecessary idle_cpumask
+    - Make meson.build more readable
+    - Update README.md
+    - systemd-services: add one service for all schedulers and config file
+    - systemd-services: setting conflict between schedulers
+    - scx_layered: Fix AFFN_VIOL stat bump
+    - ci: print the latest commit of the checked out sched-ext kernel
+
+ -- Andrea Righi <andrea.righi@canonical.com>  Sun, 11 Feb 2024 19:22:53 +0100
+
 scx (0.1.6-1ubuntu1) noble; urgency=medium
 
   * New upstream version 0.1.6:
