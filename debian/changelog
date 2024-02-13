@@ -1,3 +1,10 @@
+scx (0.1.7-1ubuntu1) noble; urgency=medium
+
+  * New upstream version 0.1.7:
+    - Bump to 0.1.7
+
+ -- Andrea Righi <andrea.righi@canonical.com>  Tue, 13 Feb 2024 16:00:44 +0100
+
 scx (0.1.6.1-1ubuntu2) noble; urgency=medium
 
   * Miscellaneous Ubuntu changes:
