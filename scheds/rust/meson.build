@@ -1,3 +1,4 @@
+subdir('scx_fifo')
 subdir('scx_layered')
 subdir('scx_rusty')
 subdir('scx_rustland')
