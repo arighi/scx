@@ -4,8 +4,8 @@
 fn main() {
     scx_utils::BpfBuilder::new()
         .unwrap()
-        .enable_intf("src/bpf/intf.h", "bpf_intf.rs")
-        .enable_skel("src/bpf/main.bpf.c", "bpf")
+        .enable_intf("../../../rust/scx_user/src/bpf/intf.h", "bpf_intf.rs")
+        .enable_skel("../../../rust/scx_user/src/bpf/main.bpf.c", "bpf")
         .build()
         .unwrap();
 }
