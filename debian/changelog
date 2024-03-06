@@ -1,3 +1,10 @@
+scx (0.1.7.2-1ubuntu1) noble; urgency=medium
+
+  * Miscellaneous Ubuntu changes:
+    - debian: update linux dependency
+
+ -- Andrea Righi <andrea.righi@canonical.com>  Wed, 06 Mar 2024 09:51:23 +0100
+
 scx (0.1.7.1-1ubuntu1) noble; urgency=medium
 
   * Miscellaneous Ubuntu changes:
