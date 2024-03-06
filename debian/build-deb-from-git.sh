@@ -11,7 +11,7 @@ fi
 set -e
 
 # Fetch Rust dependencies for offline build
-meson setup build -Dcargo_home=`pwd`/cargo-deps
+meson setup build -Dcargo_home=`pwd`/cargo-deps -Dlibbpf_a=disabled
 meson compile -C build fetch
 meson clean
 
