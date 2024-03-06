@@ -1,3 +1,61 @@
+scx (0.1.7.1-1ubuntu1) noble; urgency=medium
+
+  * Miscellaneous Ubuntu changes:
+    - debian: disable building libbpf
+    - Libbpf - add BUILD_STATIC_ONLY flag
+    - Always build libbpf as a PIE
+    - scx_rlfifo: print a performance warning banner
+    - scx_rlfifo: replace 1ms sleep with sched_yield()
+    - meson-scripts/build_libbpf: Accommodate meson setting CC to "ccache $COMPILER"
+    - scx_rustland_core: provide DispatchedTask API methods
+    - scx_rustland_core: introduce per-task time slice
+    - Add libbpf as a submodule
+    - Revert "Merge pull request #165 from sched-ext/reduce-rust-build-load"
+    - Revert "Merge pull request #163 from jordalgo/libbpf-submodule"
+    - Add libbpf as a submodule
+    - build: limit the maximum amount of parallel cargo build
+    - scx: update /etc/default/scx
+    - scx_rustland_core: generate source files in-tree
+    - scx_utils: introduce Builder()
+    - scx_rustland_core: introduce RustLandBuilder()
+    - scx_rustland_core: introduce method bpf.update_tasks()
+    - scx_rlfifo: simple user-space FIFO scheduler written in Rust
+    - scx_rustland: update documentation
+    - scx_rustland_core: include scx_rustland backend
+    - rust: introduce scx_rustland_core crate
+    - rusty: Use new infeasible crate
+    - infeasible: Add a new infeasible crate for load balancing
+    - Gate cargo build options behind 'enable_rust'
+    - ci: eclude scx_qmap and scx_userland from testing
+    - sync-to-kernel.sh: Sync scx_central and scx_flatcg
+    - common: Cosmetic change for consistency
+    - scheds/sync-to-kernel.sh: Warn and skip if destination file is missing instead of failing
+    - rustland: Update rustland to use topology.rs
+    - topology: Add maps to cores and cpus from root Topology object
+    - rusty: Use new topology crate
+    - topology: Add new topology crate
+    - topology: Refactor topology.rs to use cpumask crate
+    - cpumask: Add new Cpumask crate
+    - scx_layered: Add MATCH_NICE_EQUALS match kind
+    - layered: Don't refresh cpumasks before attaching
+    - Revert "layered: Set layered cpumask in scheduler init call"
+    - layered: Consume from layer with cpumask in layered_dispatch
+    - layered: Set layered cpumask in scheduler init call
+    - layered: Initialize layers before attaching scheduler
+    - scx: Demote panic! to warn! in topology crate
+    - scx_rustland: introduce --builtin-idle
+    - scx_rustland: simply CPU selection by relying on built-in idle selection
+    - scx_rustland: introduce --full-user
+    - Add libbpf logging to the rust schedulers
+    - add documentation
+    - rust: Add topology module to utils crate
+    - scx_rustland: prevent misaligned pointer dereference
+    - scx_rustland: use a ring buffer for queued tasks
+    - scx_rustland: avoid memory copies while accessing cpu_map
+    - README: drop reference to old ABI /sys/kernel/debug/sched/ext
+
+ -- Andrea Righi <andrea.righi@canonical.com>  Wed, 06 Mar 2024 07:46:25 +0100
+
 scx (0.1.7-1ubuntu1) noble; urgency=medium
 
   * New upstream version 0.1.7:
