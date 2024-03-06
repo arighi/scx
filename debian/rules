@@ -19,6 +19,7 @@ override_dh_auto_configure:
 		--prefix=/usr \
 		--datadir=$(CURDIR)/debian/scx/usr \
 		-Dbpftool=$(BPFTOOL) -Dcargo_home=$(CURDIR)/cargo-deps \
+		-Dlibbpf_a=disabled \
 		-Doffline=true -Dbuildtype=release $(MESON_EXTRA_OPTS)
 
 override_dh_auto_build:
