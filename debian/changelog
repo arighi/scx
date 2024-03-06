@@ -1,3 +1,10 @@
+scx (0.1.7.3-1ubuntu1) noble; urgency=medium
+
+  * Miscellaneous Ubuntu changes:
+    - debian: add jq to the build dependencies
+
+ -- Andrea Righi <andrea.righi@canonical.com>  Wed, 06 Mar 2024 10:18:11 +0100
+
 scx (0.1.7.2-1ubuntu1) noble; urgency=medium
 
   * Miscellaneous Ubuntu changes:
