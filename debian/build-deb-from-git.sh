@@ -13,7 +13,6 @@ set -e
 # Fetch Rust dependencies for offline build
 meson setup build -Dcargo_home=`pwd`/cargo-deps -Dlibbpf_a=disabled
 meson compile -C build fetch
-meson clean
 
 # Commit all Rust dependencies in cargo-deps
 git add cargo-deps
