@@ -10,8 +10,10 @@ fi
 # Stop on error
 set -e
 
+BPFTOOL=$(ls -c1 /usr/lib/linux-*tools*/bpftool 2>/dev/null | sort -n | tail -1)
+
 # Fetch Rust dependencies for offline build
-meson setup build -Dcargo_home=`pwd`/cargo-deps -Dlibbpf_a=disabled
+meson setup build -Dcargo_home=`pwd`/cargo-deps -Dlibbpf_a=disabled -Dbpftool=${BPFTOOL}
 meson compile -C build fetch
 
 # Commit all Rust dependencies in cargo-deps
