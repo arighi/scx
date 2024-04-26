@@ -1,3 +1,12 @@
+scx (0.1.8.8-1ubuntu1) noble; urgency=medium
+
+  * Miscellaneous Ubuntu changes:
+    - Rebase on top of the latest upstream main branch
+    - include custom libbpf and bpftool in the source package
+    - enable scx_rustland by default
+
+ -- Andrea Righi <andrea.righi@canonical.com>  Fri, 26 Apr 2024 19:14:36 +0200
+
 scx (0.1.7.4-1ubuntu1) noble; urgency=medium
 
   * Miscellaneous Ubuntu changes:
