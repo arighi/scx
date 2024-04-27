@@ -15,11 +15,14 @@ endif
 	dh $@
 
 override_dh_auto_configure:
+	mkdir -p debian/build
+	cd debian/build && ln -s ../../build/libbpf libbpf
+	cd debian/build && ln -s ../../build/bpftool bpftool
+	cd debian/build/libbpf && mkdir -p src/usr/include
 	meson setup debian/build \
 		--prefix=/usr \
 		--datadir=$(CURDIR)/debian/scx/usr \
-		-Dbpftool=$(BPFTOOL) -Dcargo_home=$(CURDIR)/cargo-deps \
-		-Dlibbpf_a=disabled \
+		-Dcargo_home=$(CURDIR)/cargo-deps \
 		-Doffline=true -Dbuildtype=release $(MESON_EXTRA_OPTS)
 
 override_dh_auto_build:

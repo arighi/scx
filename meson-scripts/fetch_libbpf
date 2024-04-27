@@ -1,7 +1,9 @@
 #!/bin/bash
 
 cd $1
-rm -rf libbpf
+if [ -e libbpf ]; then
+    exit 0
+fi
 git clone --depth=1 https://github.com/libbpf/libbpf
 cd libbpf
 git fetch --depth=1 origin $2

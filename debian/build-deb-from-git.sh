@@ -13,12 +13,28 @@ set -e
 BPFTOOL=$(ls -c1 /usr/lib/linux-*tools*/bpftool 2>/dev/null | sort -n | tail -1)
 
 # Fetch Rust dependencies for offline build
-meson setup build -Dcargo_home=`pwd`/cargo-deps -Dlibbpf_a=disabled -Dbpftool=${BPFTOOL}
+meson setup build -Dcargo_home=`pwd`/cargo-deps
 meson compile -C build fetch
 
-# Commit all Rust dependencies in cargo-deps
-git add cargo-deps
-git commit -sm "include Rust dependencies"
+# Clean-up binary artifacts from embedded repos
+cd build/libbpf
+rm -f assets/*
+rm -f fuzz/bpf-object-fuzzer_seed_corpus.zip
+rm -rf .git
+cd -
+cd build/bpftool/libbpf
+rm -f assets/*
+rm -f fuzz/bpf-object-fuzzer_seed_corpus.zip
+rm -rf .git
+cd -
+cd build/bpftool
+rm -rf .git
+cd -
+
+# Add and commit all the embedded build dependencies
+git add -f build
+git add -f cargo-deps
+git commit -sm "DROP THIS: include dependencies"
 
 # Create upstream tag (required by gbp)
 version=$(dpkg-parsechangelog -SVersion | cut -d- -f1)
