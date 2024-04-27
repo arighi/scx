@@ -23,7 +23,7 @@ override_dh_auto_configure:
 		-Doffline=true -Dbuildtype=release $(MESON_EXTRA_OPTS)
 
 override_dh_auto_build:
-	meson compile -C debian/build
+	meson compile -j1 -C debian/build
 
 override_dh_auto_test:
 	dh_auto_test
