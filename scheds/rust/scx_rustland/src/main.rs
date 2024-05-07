@@ -129,6 +129,14 @@ struct Opts {
     #[clap(short = 'u', long, action = clap::ArgAction::SetTrue)]
     full_user: bool,
 
+    /// By default the scheduler automatically transitions to FIFO mode when the system is
+    /// underutilized. This allows to reduce unnecessary scheduling overhead and boost performance
+    /// when the system is not running at full capacity.
+    ///
+    /// Set this option to disable this automatic transition.
+    #[clap(short = 'f', long, action = clap::ArgAction::SetTrue)]
+    disable_fifo: bool,
+
     /// If specified, only tasks which have their scheduling policy set to
     /// SCHED_EXT using sched_setscheduler(2) are switched. Otherwise, all
     /// tasks are switched.
@@ -297,6 +305,7 @@ impl<'a> Scheduler<'a> {
             opts.partial,
 	    opts.exit_dump_len,
             opts.full_user,
+            !opts.disable_fifo,
             opts.debug,
         )?;
         info!("{} scheduler attached - {} online CPUs", SCHEDULER_NAME, nr_online_cpus);
@@ -687,6 +696,10 @@ impl<'a> Scheduler<'a> {
             "  nr_cancel_dispatches={} nr_bounce_dispatches={}",
             nr_cancel_dispatches, nr_bounce_dispatches,
         );
+
+        // Show the amount of tasks that are currently using a CPU.
+        let nr_running = *self.bpf.nr_running_mut();
+        info!("  nr_running={}", nr_running);
 
         // Show tasks that are waiting to be dispatched.
         let nr_queued = *self.bpf.nr_queued_mut();
