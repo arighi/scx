@@ -92,6 +92,19 @@ const volatile bool debug;
   */
 const volatile bool full_user;
 
+/*
+ * Automatically switch to simple FIFO scheduling during periods of system
+ * underutilization to minimize unnecessary scheduling overhead.
+ *
+ * 'fifo_sched' can be used by the user-space scheduler to enable/disable this
+ * behavior.
+ *
+ * 'is_fifo_enabled' indicates whether the scheduling has switched to FIFO mode
+ * or regular scheduling mode.
+ */
+const volatile bool fifo_sched;
+static bool is_fifo_enabled;
+
 /* Allow to use bpf_printk() only when @debug is set */
 #define dbg_msg(_fmt, ...) do {						\
 	if (debug)							\
@@ -186,6 +199,13 @@ struct {
 	__type(key, u32);
 	__type(value, struct usersched_timer);
 } usersched_timer SEC(".maps");
+
+/*
+ * Time period of the scheduler heartbeat, used to periodically kick the the
+ * scheduler and check if we need to switch to FIFO mode or regular
+ * scheduling.
+ */
+#define USERSCHED_TIMER_NS NSEC_PER_SEC
 
 /*
  * Map of allocated CPUs.
@@ -439,7 +459,7 @@ s32 BPF_STRUCT_OPS(rustland_select_cpu, struct task_struct *p, s32 prev_cpu,
 	s32 cpu;
 
 	cpu = scx_bpf_select_cpu_dfl(p, prev_cpu, wake_flags, &is_idle);
-	if (is_idle && cpu < num_possible_cpus && !full_user) {
+	if (is_idle && !full_user) {
 		/*
 		 * Using SCX_DSQ_LOCAL ensures that the task will be executed
 		 * directly on the CPU returned by this function.
@@ -514,6 +534,16 @@ void BPF_STRUCT_OPS(rustland_enqueue, struct task_struct *p, u64 enq_flags)
 	 * long (i.e., ksoftirqd/N, rcuop/N, etc.).
 	 */
 	if (is_kthread(p) && p->nr_cpus_allowed == 1) {
+		dispatch_task(p, SCX_DSQ_LOCAL, 0, 0, enq_flags);
+		__sync_fetch_and_add(&nr_kernel_dispatches, 1);
+		return;
+	}
+
+	/*
+	 * Dispatch directly to the shared DSQif the scheduler is set to FIFO
+	 * mode.
+	 */
+	if (is_fifo_enabled) {
 		dispatch_task(p, SCX_DSQ_LOCAL, 0, 0, enq_flags);
 		__sync_fetch_and_add(&nr_kernel_dispatches, 1);
 		return;
@@ -785,6 +815,49 @@ void BPF_STRUCT_OPS(rustland_exit_task, struct task_struct *p,
 }
 
 /*
+ * Check if we can switch to FIFO mode if the system is underutilized.
+ *
+ * We consider the system underutilized if the amount of tasks that are running
+ * or waiting to run is less than half the amount of CPUs available in the
+ * system.
+ */
+static bool should_enable_fifo(void)
+{
+	/* Moving average of the currently active tasks */
+	static u64 nr_active_avg;
+	u64 nr_active;
+
+	if (!fifo_sched)
+		return false;
+
+	/* Get the amount of active tasks (running or waiting to run) */
+	nr_active = nr_running + nr_queued + nr_scheduled;
+
+	/* Update moving average of active tasks */
+	nr_active_avg = (nr_active_avg + nr_active) / 2;
+
+	/*
+	 * We should react fast at exiting from FIFO mode, to prevent potential
+	 * stuttering behavior is the system becomes suddenly overloaded.
+	 *
+	 * At the same time, we should be more careful at entering FIFO mode,
+	 * because, in this case, we may introduce stuttering behavior if the
+	 * system is overloaded and we don't properly detect it (false
+	 * positive), entering, incorrectly, in FIFO mode.
+	 *
+	 * In order to mitigate the false positives, use a "smoother" moving
+	 * average for the amount of active tasks to determine if we need to
+	 * enter FIFO mode, and use the last sample of the active tasks to
+	 * determine if we need to exit FIFO mode.
+	 */
+	if (!is_fifo_enabled)
+		nr_active = nr_active_avg;
+
+	/* Update flag that determines if FIFO needs to be enabled */
+	return nr_active <= (num_possible_cpus >> 1);
+}
+
+/*
  * Heartbeat scheduler timer callback.
  *
  * If the system is completely idle the sched-ext watchdog may incorrectly
@@ -800,8 +873,11 @@ static int usersched_timer_fn(void *map, int *key, struct bpf_timer *timer)
 	/* Kick the scheduler */
 	set_usersched_needed();
 
+	/* Update flag that determines if FIFO scheduling needs to be enabled */
+	is_fifo_enabled = should_enable_fifo();
+
 	/* Re-arm the timer */
-	err = bpf_timer_start(timer, NSEC_PER_SEC, 0);
+	err = bpf_timer_start(timer, USERSCHED_TIMER_NS, 0);
 	if (err)
 		scx_bpf_error("Failed to arm stats timer");
 
@@ -824,7 +900,7 @@ static int usersched_timer_init(void)
 	}
 	bpf_timer_init(timer, &usersched_timer, CLOCK_BOOTTIME);
 	bpf_timer_set_callback(timer, usersched_timer_fn);
-	err = bpf_timer_start(timer, NSEC_PER_SEC, 0);
+	err = bpf_timer_start(timer, USERSCHED_TIMER_NS, 0);
 	if (err)
 		scx_bpf_error("Failed to arm scheduler timer");
 
