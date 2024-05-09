@@ -750,15 +750,8 @@ void BPF_STRUCT_OPS(rustland_stopping, struct task_struct *p, bool runnable)
 }
 
 /*
- * A CPU is about to change its idle state.
- *
- * NOTE: implementing an update_idle() callback automatically disables the
- * built-in idle tracking. This is fine because we want to rely on the internal
- * CPU ownership map (get_cpu_owner() / set_cpu_owner()) to determine if a CPU
- * is available or not.
- *
- * This information can easily be shared with the user-space scheduler via
- * cpu_map.
+ * A CPU is about to change its idle state: notify the user-space scheduler
+ * that it is possible to schedule some tasks if needed.
  */
 void BPF_STRUCT_OPS(rustland_update_idle, s32 cpu, bool idle)
 {
@@ -772,14 +765,8 @@ void BPF_STRUCT_OPS(rustland_update_idle, s32 cpu, bool idle)
 	 * A CPU is now available, notify the user-space scheduler that tasks
 	 * can be dispatched.
 	 */
-	if (usersched_has_pending_tasks()) {
+	if (usersched_has_pending_tasks())
 		set_usersched_needed();
-		/*
-		 * Wake up the idle CPU, so that it can immediately accept
-		 * dispatched tasks.
-		 */
-		scx_bpf_kick_cpu(cpu, 0);
-	}
 }
 
 /*
@@ -812,7 +799,6 @@ void BPF_STRUCT_OPS(rustland_cpu_release, s32 cpu,
 	if (is_usersched_task(p))
 		set_usersched_needed();
 }
-
 
 /*
  * A new task @p is being created.
