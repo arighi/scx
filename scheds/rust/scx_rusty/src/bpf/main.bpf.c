@@ -318,7 +318,6 @@ static void dom_dcycle_xfer_task(struct task_struct *p, struct task_ctx *taskc,
 	u32 idx = 0, weight = taskc->weight;
 	struct lock_wrapper *from_lockw, *to_lockw;
 	struct ravg_data task_dcyc_rd;
-	u64 from_dcycle[2], to_dcycle[2], task_dcycle;
 
 	from_lockw = lookup_dom_bkt_lock(from_domc->id, weight);
 	to_lockw = lookup_dom_bkt_lock(to_domc->id, weight);
@@ -339,22 +338,14 @@ static void dom_dcycle_xfer_task(struct task_struct *p, struct task_ctx *taskc,
 	 */
 	ravg_accumulate(&taskc->dcyc_rd, taskc->runnable, now, load_half_life);
 	task_dcyc_rd = taskc->dcyc_rd;
-	if (debug >= 2)
-		task_dcycle = ravg_read(&task_dcyc_rd, now, load_half_life);
 
 	/* transfer out of @from_domc */
 	bpf_spin_lock(&from_lockw->lock);
 	if (taskc->runnable)
 		from_bucket->dcycle--;
 
-	if (debug >= 2)
-		from_dcycle[0] = ravg_read(&from_bucket->rd, now, load_half_life);
-
 	ravg_transfer(&from_bucket->rd, from_bucket->dcycle,
 		      &task_dcyc_rd, taskc->runnable, load_half_life, false);
-
-	if (debug >= 2)
-		from_dcycle[1] = ravg_read(&from_bucket->rd, now, load_half_life);
 
 	bpf_spin_unlock(&from_lockw->lock);
 
@@ -363,25 +354,10 @@ static void dom_dcycle_xfer_task(struct task_struct *p, struct task_ctx *taskc,
 	if (taskc->runnable)
 		to_bucket->dcycle++;
 
-	if (debug >= 2)
-		to_dcycle[0] = ravg_read(&to_bucket->rd, now, load_half_life);
-
 	ravg_transfer(&to_bucket->rd, to_bucket->dcycle,
 		      &task_dcyc_rd, taskc->runnable, load_half_life, true);
 
-	if (debug >= 2)
-		to_dcycle[1] = ravg_read(&to_bucket->rd, now, load_half_life);
-
 	bpf_spin_unlock(&to_lockw->lock);
-
-	if (debug >= 2)
-		bpf_printk("XFER DCYCLE dom%u->%u task=%lu from=%lu->%lu to=%lu->%lu",
-			   from_domc->id, to_domc->id,
-			   task_dcycle >> RAVG_FRAC_BITS,
-			   from_dcycle[0] >> RAVG_FRAC_BITS,
-			   from_dcycle[1] >> RAVG_FRAC_BITS,
-			   to_dcycle[0] >> RAVG_FRAC_BITS,
-			   to_dcycle[1] >> RAVG_FRAC_BITS);
 }
 
 static u64 dom_min_vruntime(struct dom_ctx *domc)
