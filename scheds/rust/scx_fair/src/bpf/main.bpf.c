@@ -13,11 +13,22 @@ char _license[] SEC("license") = "GPL";
 #define SHARED_DSQ	0
 
 /*
+ * Maximum multiplier for the dynamic task priority (only applied when
+ * lowlatency mode is enabled).
+ */
+#define MAX_LATENCY_WEIGHT	1000
+
+/*
  * Task time slice range.
  */
 const volatile u64 slice_max = 20ULL * NSEC_PER_MSEC;
 const volatile u64 slice_min = 1ULL * NSEC_PER_MSEC;
 const volatile u64 slice_lag = 20ULL * NSEC_PER_MSEC;
+
+/*
+ * Autotedetect and boost interactive tasks, giving them a higher priority.
+ */
+const volatile bool lowlatency;
 
 /*
  * When enabled always dispatch per-CPU kthreads directly on their CPU DSQ.
@@ -99,6 +110,17 @@ struct task_ctx {
 	 * Total execution time of the task.
 	 */
 	u64 sum_exec_runtime;
+
+	/*
+	 * Voluntary context switches metrics.
+	 */
+	u64 nvcsw;
+	u64 nvcsw_ts;
+
+	/*
+	 * Task's dynamic priority multiplier (used only in lowlatency mode).
+	 */
+	u64 lat_weight;
 };
 
 /* Map that contains task-local storage. */
@@ -145,6 +167,18 @@ static int calloc_cpumask(struct bpf_cpumask **p_cpumask)
 }
 
 /*
+ * Exponential weighted moving average (EWMA).
+ *
+ * Copied from scx_lavd. Returns the new average as:
+ *
+ *	new_avg := (old_avg * .75) + (new_val * .25);
+ */
+static u64 calc_avg(u64 old_val, u64 new_val)
+{
+	return (old_val - (old_val >> 2)) + (new_val >> 2);
+}
+
+/*
  * Compare two vruntime values, returns true if the first value is less than
  * the second one.
  *
@@ -156,11 +190,37 @@ static inline bool vtime_before(u64 a, u64 b)
 }
 
 /*
+ * Return the dynamic priority multiplier when "lowlatency" mode is enabled.
+ *
+ * The multiplier is evaluated in function of the task's average rate of
+ * voluntary context switches per second.
+ */
+static u64 task_dyn_prio(struct task_struct *p)
+{
+	struct task_ctx *tctx;
+
+	tctx = try_lookup_task_ctx(p);
+	if (!tctx)
+		return 1;
+	return MAX(tctx->lat_weight, 1);
+}
+
+/*
+ * Return task's dynamic priority.
+ */
+static u64 task_prio(struct task_struct *p)
+{
+	if (!lowlatency)
+		return p->scx.weight;
+	return p->scx.weight * task_dyn_prio(p);
+}
+
+/*
  * Return a value inversely proportional to the task's weight.
  */
 static inline u64 scale_inverse_fair(struct task_struct *p, u64 value)
 {
-	return value * 100 / p->scx.weight;
+	return value * 100 / task_prio(p);
 }
 
 /*
@@ -518,7 +578,7 @@ void BPF_STRUCT_OPS(fair_running, struct task_struct *p)
  */
 static u64 task_lag(struct task_struct *p)
 {
-	return slice_lag * p->scx.weight / 100;
+	return slice_lag * task_prio(p) / 100;
 }
 
 /*
@@ -528,7 +588,7 @@ static u64 task_lag(struct task_struct *p)
 void BPF_STRUCT_OPS(fair_stopping, struct task_struct *p, bool runnable)
 {
 	u64 now = bpf_ktime_get_ns();
-	u64 lag = task_lag(p), slice;
+	u64 lag = task_lag(p), slice, delta_t;
 	s32 cpu = scx_bpf_task_cpu(p);
 	struct cpu_ctx *cctx;
 	struct task_ctx *tctx;
@@ -564,11 +624,42 @@ void BPF_STRUCT_OPS(fair_stopping, struct task_struct *p, bool runnable)
 	 * Update global system vruntime.
 	 */
 	vtime_now += slice;
+
+	/*
+	 * Update task's average rate of voluntary context switches per second.
+	 */
+	delta_t = (s64)(now - tctx->nvcsw_ts);
+	if (delta_t > NSEC_PER_SEC) {
+		/*
+		 * Evaluate the task's latency weight as the task's average
+		 * rate of voluntary context switches per second.
+		 */
+		u64 delta_nvcsw = p->nvcsw - tctx->nvcsw;
+		u64 avg_nvcsw = delta_nvcsw * NSEC_PER_SEC / delta_t;
+		u64 lat_weight = MIN(avg_nvcsw, MAX_LATENCY_WEIGHT);
+
+		tctx->lat_weight = calc_avg(tctx->lat_weight, lat_weight);
+
+		tctx->nvcsw = p->nvcsw;
+		tctx->nvcsw_ts = now;
+	}
 }
 
 void BPF_STRUCT_OPS(fair_enable, struct task_struct *p)
 {
+	struct task_ctx *tctx;
+
 	p->scx.dsq_vtime = vtime_now;
+
+	tctx = try_lookup_task_ctx(p);
+	if (!tctx) {
+		scx_bpf_error("incorrectly initialized task: %d (%s)",
+			      p->pid, p->comm);
+		return;
+	}
+	tctx->sum_exec_runtime = p->se.sum_exec_runtime;
+	tctx->nvcsw = p->nvcsw;
+	tctx->nvcsw_ts = bpf_ktime_get_ns();
 }
 
 s32 BPF_STRUCT_OPS(fair_init_task, struct task_struct *p,
