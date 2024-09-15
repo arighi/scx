@@ -62,7 +62,7 @@ for sched in ${!SCHEDS[@]}; do
 
     rm -f /tmp/output
     timeout --preserve-status ${GUEST_TIMEOUT} \
-        vng -m 2G -v -r ${kernel} -- \
+        vng -m 4G -v -r ${kernel} -- \
             "timeout --foreground --preserve-status ${TEST_TIMEOUT} ${sched_path} ${args}" \
                 2> >(tee /tmp/output) </dev/null
         grep -v " Speculative Return Stack Overflow" /tmp/output | \
