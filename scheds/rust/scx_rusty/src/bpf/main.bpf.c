@@ -326,7 +326,6 @@ static void dom_dcycle_xfer_task(struct task_struct *p, struct task_ctx *taskc,
 	u32 idx = 0, weight = taskc->weight;
 	struct lock_wrapper *from_lockw, *to_lockw;
 	struct ravg_data task_dcyc_rd;
-	u64 from_dcycle[2], to_dcycle[2], task_dcycle;
 
 	from_lockw = lookup_dom_bkt_lock(from_domc->id, weight);
 	to_lockw = lookup_dom_bkt_lock(to_domc->id, weight);
@@ -347,22 +346,14 @@ static void dom_dcycle_xfer_task(struct task_struct *p, struct task_ctx *taskc,
 	 */
 	ravg_accumulate(&taskc->dcyc_rd, taskc->runnable, now, load_half_life);
 	task_dcyc_rd = taskc->dcyc_rd;
-	if (debug >= 2)
-		task_dcycle = ravg_read(&task_dcyc_rd, now, load_half_life);
 
 	/* transfer out of @from_domc */
 	bpf_spin_lock(&from_lockw->lock);
 	if (taskc->runnable)
 		from_bucket->dcycle--;
 
-	if (debug >= 2)
-		from_dcycle[0] = ravg_read(&from_bucket->rd, now, load_half_life);
-
 	ravg_transfer(&from_bucket->rd, from_bucket->dcycle,
 		      &task_dcyc_rd, taskc->runnable, load_half_life, false);
-
-	if (debug >= 2)
-		from_dcycle[1] = ravg_read(&from_bucket->rd, now, load_half_life);
 
 	bpf_spin_unlock(&from_lockw->lock);
 
@@ -371,25 +362,10 @@ static void dom_dcycle_xfer_task(struct task_struct *p, struct task_ctx *taskc,
 	if (taskc->runnable)
 		to_bucket->dcycle++;
 
-	if (debug >= 2)
-		to_dcycle[0] = ravg_read(&to_bucket->rd, now, load_half_life);
-
 	ravg_transfer(&to_bucket->rd, to_bucket->dcycle,
 		      &task_dcyc_rd, taskc->runnable, load_half_life, true);
 
-	if (debug >= 2)
-		to_dcycle[1] = ravg_read(&to_bucket->rd, now, load_half_life);
-
 	bpf_spin_unlock(&to_lockw->lock);
-
-	if (debug >= 2)
-		bpf_printk("XFER DCYCLE dom%u->%u task=%lu from=%lu->%lu to=%lu->%lu",
-			   from_domc->id, to_domc->id,
-			   task_dcycle >> RAVG_FRAC_BITS,
-			   from_dcycle[0] >> RAVG_FRAC_BITS,
-			   from_dcycle[1] >> RAVG_FRAC_BITS,
-			   to_dcycle[0] >> RAVG_FRAC_BITS,
-			   to_dcycle[1] >> RAVG_FRAC_BITS);
 }
 
 static u64 dom_min_vruntime(struct dom_ctx *domc)
@@ -397,31 +373,18 @@ static u64 dom_min_vruntime(struct dom_ctx *domc)
 	return READ_ONCE(domc->min_vruntime);
 }
 
-int dom_xfer_task(pid_t pid, u32 new_dom_id, u64 now)
+static int dom_xfer_task(struct task_struct *p,
+			 struct task_ctx *taskc, u32 new_dom_id, u64 now)
 {
 	struct dom_ctx *from_domc, *to_domc;
-	struct task_ctx *taskc;
-	struct task_struct *p;
-
-	p = bpf_task_from_pid(pid);
-	if (!p) {
-		scx_bpf_error("Failed to lookup task %d", pid);
-		return 0;
-	}
-
-	taskc = lookup_task_ctx(p);
-	if (!taskc)
-		goto free_task;
 
 	from_domc = lookup_dom_ctx(taskc->dom_id);
 	to_domc = lookup_dom_ctx(new_dom_id);
 
 	if (!from_domc || !to_domc || !taskc)
-		goto free_task;
+		return -ENOENT;
 
 	dom_dcycle_xfer_task(p, taskc, from_domc, to_domc, now);
-free_task:
-	bpf_task_release(p);
 	return 0;
 }
 
@@ -792,8 +755,10 @@ static bool task_set_domain(struct task_ctx *taskc, struct task_struct *p,
 				   p->cpus_ptr)) {
 		u64 now = bpf_ktime_get_ns();
 
-		if (!init_dsq_vtime)
-			dom_xfer_task(p->pid, new_dom_id, now);
+		if (!init_dsq_vtime) {
+			if (dom_xfer_task(p, taskc, new_dom_id, now) < 0)
+				return false;
+		}
 		taskc->dom_id = new_dom_id;
 		p->scx.dsq_vtime = dom_min_vruntime(new_domc);
 		taskc->deadline = p->scx.dsq_vtime +
