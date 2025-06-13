@@ -203,6 +203,13 @@ struct Opts {
     #[clap(short = 'R', long, action = clap::ArgAction::SetTrue)]
     rr_sched: bool,
 
+    /// Use in-kernel idle CPU selection policy.
+    ///
+    /// Use the default in-kernel idle CPU selection policy, instead of the custom policy.
+    /// Turning on this option may override the effect of --primary-domain.
+    #[clap(short = 'b', long, action = clap::ArgAction::SetTrue)]
+    builtin_idle: bool,
+
     /// Enable per-CPU tasks prioritization.
     ///
     /// This allows to prioritize per-CPU tasks that usually tend to be de-prioritized (since they
@@ -369,6 +376,7 @@ impl<'a> Scheduler<'a> {
         skel.maps.rodata_data.numa_disabled = opts.disable_numa;
         skel.maps.rodata_data.pcpu_dsq = opts.cpu_runqueue;
         skel.maps.rodata_data.rr_sched = opts.rr_sched;
+        skel.maps.rodata_data.builtin_idle = opts.builtin_idle;
         skel.maps.rodata_data.strict_domain = opts.strict_domain;
         skel.maps.rodata_data.local_pcpu = opts.local_pcpu;
         skel.maps.rodata_data.no_wake_sync = opts.no_wake_sync;
