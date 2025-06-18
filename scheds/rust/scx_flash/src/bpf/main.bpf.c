@@ -1225,6 +1225,16 @@ void BPF_STRUCT_OPS(flash_dispatch, s32 cpu, struct task_struct *prev)
 		return;
 
 	/*
+	 * If the current task expired its time slice and no other task wants
+	 * to run, simply replenish its time slice and let it run for another
+	 * round on the same CPU.
+	 */
+	if (prev && keep_running(prev, cpu)) {
+		prev->scx.slice = slice_max;
+		return;
+	}
+
+	/*
 	 * If per-CPU DSQs are enabled attempt to consume the task with the
 	 * minimum vruntime within the same LLC.
 	 */
@@ -1241,7 +1251,8 @@ void BPF_STRUCT_OPS(flash_dispatch, s32 cpu, struct task_struct *prev)
 
 			dsq_id = cpu_to_dsq(other_cpu);
 			bpf_for_each(scx_dsq, p, dsq_id, 0) {
-				if (p->scx.dsq_vtime < min_vtime) {
+				if (p->scx.dsq_vtime < min_vtime &&
+				    bpf_cpumask_test_cpu(cpu, p->cpus_ptr)) {
 					min_vtime = p->scx.dsq_vtime;
 					min_dsq_id = dsq_id;
 				}
@@ -1253,14 +1264,6 @@ void BPF_STRUCT_OPS(flash_dispatch, s32 cpu, struct task_struct *prev)
 		    scx_bpf_dsq_move_to_local(min_dsq_id))
 			return;
 	}
-
-	/*
-	 * If the current task expired its time slice and no other task wants
-	 * to run, simply replenish its time slice and let it run for another
-	 * round on the same CPU.
-	 */
-	if (prev && keep_running(prev, cpu))
-		prev->scx.slice = slice_max;
 }
 
 /*
