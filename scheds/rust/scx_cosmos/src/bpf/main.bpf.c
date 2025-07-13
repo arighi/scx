@@ -66,8 +66,10 @@ static u64 vtime_now;
  */
 struct task_ctx {
 	u64 last_run_at;
+	u64 last_stop_at;
 	u64 exec_runtime;
 	u64 vtime;
+	u64 perf_lvl;
 };
 
 struct {
@@ -429,6 +431,10 @@ void BPF_STRUCT_OPS(cosmos_enqueue, struct task_struct *p, u64 enq_flags)
 	s32 prev_cpu = scx_bpf_task_cpu(p), cpu;
 	struct task_ctx *tctx;
 
+	tctx = try_lookup_task_ctx(p);
+	if (!tctx)
+		return;
+
 	/*
 	 * Attempt to dispatch directly to an idle CPU if the task can
 	 * migrate.
@@ -445,7 +451,7 @@ void BPF_STRUCT_OPS(cosmos_enqueue, struct task_struct *p, u64 enq_flags)
 	 * Keep using the same CPU if the system is not busy, otherwise
 	 * fallback to the shared DSQ.
 	 */
-	if (!is_system_busy()) {
+	if (!is_system_busy() || tctx->perf_lvl >= busy_threshold) {
 		scx_bpf_dsq_insert(p, SCX_DSQ_LOCAL, task_slice(p), enq_flags);
 		return;
 	}
@@ -454,9 +460,6 @@ void BPF_STRUCT_OPS(cosmos_enqueue, struct task_struct *p, u64 enq_flags)
 	 * Dispatch the task to the global DSQ, using a deadline-based
 	 * scheduling.
 	 */
-	tctx = try_lookup_task_ctx(p);
-	if (!tctx)
-		return;
 	scx_bpf_dsq_insert_vtime(p, shared_dsq(prev_cpu),
 				 task_slice(p), task_dl(p, tctx), enq_flags);
 }
@@ -533,7 +536,7 @@ void BPF_STRUCT_OPS(cosmos_running, struct task_struct *p)
 void BPF_STRUCT_OPS(cosmos_stopping, struct task_struct *p, bool runnable)
 {
 	struct task_ctx *tctx;
-	u64 slice;
+	u64 slice, perf_lvl, delta_t, now = scx_bpf_now();
 
 	tctx = try_lookup_task_ctx(p);
 	if (!tctx)
@@ -542,7 +545,7 @@ void BPF_STRUCT_OPS(cosmos_stopping, struct task_struct *p, bool runnable)
 	/*
 	 * Evaluate the used time slice.
 	 */
-	slice = MIN(scx_bpf_now() - tctx->last_run_at, SCX_SLICE_DFL);
+	slice = MIN(now - tctx->last_run_at, SCX_SLICE_DFL);
 
 	/*
 	 * Update the vruntime and the total accumulated runtime since last
@@ -558,6 +561,14 @@ void BPF_STRUCT_OPS(cosmos_stopping, struct task_struct *p, bool runnable)
 	 * Update per-CPU statistics.
 	 */
 	update_cpu_load(p, slice);
+
+	/*
+	 * Update task's CPU statistics.
+	 */
+	delta_t = now - tctx->last_stop_at;
+	perf_lvl = MIN(slice * SCX_CPUPERF_ONE / delta_t, SCX_CPUPERF_ONE);
+	tctx->perf_lvl = calc_avg(tctx->perf_lvl, perf_lvl);
+	tctx->last_stop_at = scx_bpf_now();
 }
 
 s32 BPF_STRUCT_OPS(cosmos_init_task, struct task_struct *p,
