@@ -1,0 +1,35 @@
+#!/usr/bin/make -f
+
+ARCH := $(shell dpkg-architecture -qDEB_BUILD_ARCH)
+CARGO_BUILD_TARGETDIR := debian/cargo-target
+
+export RUSTC = /usr/bin/rustc-1.85
+export CARGO = /usr/bin/cargo-1.85
+export TARGET = $(shell $(RUSTC) -vV | sed -n 's/^host: //p')
+
+%:
+	dh $@ --buildsystem=none
+
+fetch:
+	$(CARGO) vendor
+
+override_dh_auto_build:
+	$(CARGO) build --release \
+		--frozen --offline --locked \
+		--exclude scxtop \
+		--exclude scx_wd40 \
+		--exclude scx_lavd \
+		--exclude xtask \
+		--exclude scxcash \
+		--exclude vmlinux_docify \
+		--exclude scx_arena_selftests \
+		--workspace
+
+override_dh_auto_test:
+	@echo "Skipping tests"
+
+override_dh_auto_install:
+	@echo "Skipping cargo install"
+
+override_dh_installsystemd:
+	dh_installsystemd --name=scx
