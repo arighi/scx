@@ -1,0 +1,17 @@
+scx (1.0.21~rc1-1) noble; urgency=medium
+
+  * Upstream pre-release.
+
+ -- Andrea Righi <arighi@nvidia.com>  Tue, 10 Feb 2026 06:34:23 -0800
+
+scx (1.0.20-1) noble; urgency=medium
+
+  * Re-align to the latest upstream version.
+
+ -- Andrea Righi <arighi@nvidia.com>  Fri, 26 Dec 2025 00:51:57 -0800
+
+scx (1.0.17-1) noble; urgency=medium
+
+  * Initial packaging.
+
+ -- Andrea Righi <arighi@nvidia.com>  Fri, 17 Oct 2025 19:18:53 +0000
