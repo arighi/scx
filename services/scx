@@ -1,0 +1,5 @@
+# Selected scx scheduler
+SCX_SCHEDULER=scx_cosmos
+
+# Custom scheduler flags
+SCX_FLAGS='-s 20000 -d -c 0 -p 0 -e 0x02 -E 10'
