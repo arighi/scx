@@ -396,9 +396,6 @@ const volatile bool no_hrtick;
 volatile u64 nr_sis_updates;
 volatile u64 sis_scan_sum;
 
-volatile u64 user_util_sum __hot_written;
-volatile u64 user_util_snapshot_at __hot_written;
-
 /*
  * Latency-credit loans granted, and wakees placed at the lag they earned
  * because the pack had nothing left to lend. Counted in the pack, on a line
