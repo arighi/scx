@@ -168,6 +168,7 @@ void BPF_STRUCT_OPS(eevdf_quiescent, struct task_struct *p, u64 deq_flags)
 	if (deq_flags & SCX_DEQ_SLEEP) {
 		task_runnable_update(tctx, now);
 		tctx->last_sleep_at = now;
+		tctx->sleep_exec = p->se.sum_exec_runtime;
 		/* A loan ends with the activation it was granted for. */
 		tctx->credited = false;
 	}
@@ -339,8 +340,7 @@ void BPF_STRUCT_OPS(eevdf_running, struct task_struct *p)
 			cctx->curr_sched_idle = 1;
 			__sync_fetch_and_add(&nr_sched_idle_curr, 1);
 		}
-		cctx->curr_sleeper = latency_credit &&
-				     now - tctx->last_sleep_at < latency_credit_sleep_ns;
+		cctx->curr_sleeper = latency_credit && task_sleeper(p, tctx, now);
 
 		/*
 		 * A pick with company is given an hrtick, set_next_task_fair():
@@ -470,6 +470,12 @@ void BPF_STRUCT_OPS(eevdf_enable, struct task_struct *p)
 		tctx->se.vlag = 0;
 		tctx->se.deadline = 0;
 		tctx->se.vpack = NULL;
+		/*
+		 * A task already running when the scheduler loads has not slept
+		 * under it, and all it ran before would count as one burst,
+		 * see task_sleeper(). Start counting here.
+		 */
+		tctx->sleep_exec = p->se.sum_exec_runtime;
 		tctx->delay_cid = -1;
 		tctx->recent_used_cid = -1;
 		tctx->dispatch_migrate_cid = -1;

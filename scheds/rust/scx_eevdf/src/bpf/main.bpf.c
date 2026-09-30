@@ -298,11 +298,17 @@ const volatile u64 latency_credit_ns = 20000000ULL;
 
 /*
  * How recently a task must have slept to count as one that sleeps, see
- * credit_pack_cid(): a cid whose current task slept within this window is
- * running work of the wakee's own kind and is not taken from it. A hog
- * never sleeps and never qualifies.
+ * task_sleeper(), when @latency_credit_burst_ns is 0: a cid whose current
+ * task slept within this window is running work of the wakee's own kind and
+ * is not taken from it. A hog never sleeps and never qualifies.
  */
 const volatile u64 latency_credit_sleep_ns = 2000000000ULL;
+
+/*
+ * Service a task may take since it last slept and still count as one that
+ * sleeps, see task_sleeper(). 0 falls back to @latency_credit_sleep_ns.
+ */
+const volatile u64 latency_credit_burst_ns = 20000000ULL;
 
 /*
  * Share of a pack's CPU that credited wakees may take, normalized to

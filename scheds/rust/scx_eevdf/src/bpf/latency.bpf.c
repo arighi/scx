@@ -208,8 +208,57 @@ static __always_inline bool credit_crowded(s32 cid)
 }
 
 /*
+ * Return whether @p is a task that sleeps, as opposed to one that computes:
+ * whether it has run for less than @latency_credit_burst_ns since it last
+ * blocked. Credit packing leaves a cid whose current task is a sleeper alone,
+ * see credit_pack_cid().
+ *
+ * A wall-clock window cannot tell the two apart. A stress-ng worker blocks
+ * once while it starts and computes from then on, and a window of seconds
+ * calls it a sleeper for as long, so the first seconds of every new hog are
+ * spent on a cid packing will not touch. Service can: the hog is judged
+ * after a burst no pipeline stage takes. It is also blind to waiting. A task
+ * that has not run is not turning into a hog however long it sat queued, and
+ * neither is a task that has not slept yet, whose @sleep_exec is zero and
+ * which is judged on all it has run.
+ */
+static __always_inline bool task_sleeper(const struct task_struct *p,
+					 const task_ctx_t *tctx, u64 now)
+{
+	/*
+	 * A proxy-execution donor is waiting for a mutex, and the service
+	 * charged to it is what the mutex owner runs on its behalf. Judged on
+	 * that service it would turn into a hog after one long critical
+	 * section, and taking its CPU away would stall the owner it waits on.
+	 */
+	if (task_is_blocked(p))
+		return true;
+	if (latency_credit_burst_ns)
+		return p->se.sum_exec_runtime - tctx->sleep_exec <
+		       latency_credit_burst_ns;
+	return now - tctx->last_sleep_at < latency_credit_sleep_ns;
+}
+
+/*
+ * A running task stops being a sleeper without switching out when it
+ * computes past its burst, see task_sleeper(), and ops.running() is the only
+ * other place @curr_sleeper is set. Take it back at the tick.
+ */
+static void credit_tick(s32 cid, struct task_struct *p, u64 now)
+{
+	task_ctx_t *tctx;
+
+	if (!latency_credit || !cid_valid(cid) ||
+	    !READ_ONCE(cid_ctx(cid)->curr_sleeper))
+		return;
+	tctx = try_lookup_task_ctx(p);
+	if (tctx && !task_sleeper(p, tctx, now))
+		WRITE_ONCE(cid_ctx(cid)->curr_sleeper, 0);
+}
+
+/*
  * Return whether @tctx may borrow on @cid. The sleep window is always met by
- * a wakeup; it also defines the current tasks that packing leaves alone.
+ * a wakeup.
  */
 static __always_inline bool task_credit_admitted(s32 cid,
 						 const task_ctx_t *tctx, u64 now)

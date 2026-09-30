@@ -542,9 +542,22 @@ struct Opts {
     ///
     /// A CPU whose current task slept within this many milliseconds is running
     /// work of the wakee's own kind, and a credited wakee is not moved onto it
-    /// by the packing below. A hog never sleeps and never qualifies.
+    /// by the packing below. A hog never sleeps and never qualifies. Used only
+    /// with --latency-credit-burst-us 0.
     #[clap(long, default_value = "2000")]
     latency_credit_sleep_ms: u64,
+
+    /// CPU time a task may use since it last slept and still count as one that
+    /// sleeps, in microseconds.
+    ///
+    /// A task that blocked once while starting and has computed ever since is
+    /// a hog, however recently it slept. A window in wall time calls it a
+    /// sleeper for as long as the window lasts. This judges it on the CPU time
+    /// it has used instead, so a new hog is recognized once it has run this
+    /// long, and a task waiting in a queue keeps its status. 0 falls back to
+    /// --latency-credit-sleep-ms.
+    #[clap(long, default_value = "20000")]
+    latency_credit_burst_us: u64,
 
     /// Share of a CPU that credited wakees may take, in percent.
     ///
@@ -1162,6 +1175,7 @@ impl<'a> Scheduler<'a> {
         rodata.latency_credit = opts.latency_credit;
         rodata.latency_credit_ns = opts.latency_credit_us * 1000;
         rodata.latency_credit_sleep_ns = opts.latency_credit_sleep_ms * 1000000;
+        rodata.latency_credit_burst_ns = opts.latency_credit_burst_us * 1000;
         rodata.latency_credit_budget = opts.latency_credit_budget_pct * 1024 / 100;
         rodata.no_latency_credit_pack = opts.no_latency_credit_pack;
         rodata.latency_credit_max_queued = opts.latency_credit_max_queued;

@@ -1421,6 +1421,7 @@ void BPF_STRUCT_OPS(eevdf_tick, struct task_struct *p)
 
 	TOUCH_ARENA();
 	now = scx_bpf_now();
+	credit_tick(cid, p, now);
 
 	if (!cid_valid(cid))
 		return;

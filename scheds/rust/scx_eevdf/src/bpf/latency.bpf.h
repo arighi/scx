@@ -9,6 +9,7 @@
 
 #include "eevdf.bpf.h"
 
+static void credit_tick(s32 cid, struct task_struct *p, u64 now);
 static s64 task_place_offset(s32 cid, pack_t *pk, const struct task_struct *p,
 			     task_ctx_t *tctx, u64 now, u64 tnow);
 static void credit_charge(pack_t *pk, task_ctx_t *tctx, u64 delta);
