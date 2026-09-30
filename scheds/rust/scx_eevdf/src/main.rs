@@ -597,6 +597,25 @@ struct Opts {
     #[clap(long, default_value = "4")]
     latency_credit_max_queued: u32,
 
+    /// Keep tasks that never sleep off the SMT sibling of a task that does.
+    ///
+    /// A pipeline thread that wins its CPU from a hog still shares the core
+    /// with whatever runs on the other SMT thread, and a hog there takes about
+    /// half the core. While a CPU runs a task that sleeps, its sibling's hog
+    /// is preempted and the sibling runs only tasks that sleep, or idles, for
+    /// at most --smt-guard-max-us at a time. Credit packing then prefers a
+    /// core no other such task runs on, so the stages of one pipeline spread
+    /// over whole cores. Tasks are told apart as --latency-credit-burst-us
+    /// says. Hogs lose throughput while a core is kept for a sleeper. A task
+    /// that can only run on the held CPU is never held off it.
+    #[clap(long, action = clap::ArgAction::SetTrue, requires = "latency_credit")]
+    smt_guard: bool,
+
+    /// Longest time --smt-guard keeps a CPU idle for its sibling, in
+    /// microseconds.
+    #[clap(long, default_value = "20000")]
+    smt_guard_max_us: u64,
+
     /// Never interrupt a running task for a woken one with an earlier deadline.
     ///
     /// Every task then runs until its slice ends or it blocks, and a woken task
@@ -1179,6 +1198,8 @@ impl<'a> Scheduler<'a> {
         rodata.latency_credit_budget = opts.latency_credit_budget_pct * 1024 / 100;
         rodata.no_latency_credit_pack = opts.no_latency_credit_pack;
         rodata.latency_credit_max_queued = opts.latency_credit_max_queued;
+        rodata.smt_guard = opts.smt_guard;
+        rodata.smt_guard_max_ns = opts.smt_guard_max_us * 1000;
         rodata.no_vref_update = opts.no_vref_update;
 
         // Follow the capacity classes selected by the kernel unless explicitly

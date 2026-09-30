@@ -1555,7 +1555,10 @@ void BPF_STRUCT_OPS(eevdf_update_idle, s32 cid, bool idle)
 		u64 now = scx_bpf_now();
 
 		cid_demand_set(cid, false, now);
-		cid_idle_set(cid);
+		/* A cid held for its sibling is not free, see smt_guard_hold(). */
+		if (!READ_ONCE(cid_ctx(cid)->sg_held))
+			cid_idle_set(cid);
+		smt_guard_idle(cid);
 		/*
 		 * The tick stops with the CPU: record the empty pack now, or the
 		 * idle period is averaged in at the weight of the last tick.

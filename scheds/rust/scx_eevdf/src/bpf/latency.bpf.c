@@ -239,21 +239,41 @@ static __always_inline bool task_sleeper(const struct task_struct *p,
 	return now - tctx->last_sleep_at < latency_credit_sleep_ns;
 }
 
+static void smt_guard_release(s32 sib);
+static void smt_guard_tick(s32 cid, u64 now);
+
 /*
  * A running task stops being a sleeper without switching out when it
  * computes past its burst, see task_sleeper(), and ops.running() is the only
  * other place @curr_sleeper is set. Take it back at the tick.
+ *
+ * Under the SMT guard the same task may be keeping its sibling held, or be
+ * one the sibling's sleeper should not share the core with: release the
+ * sibling, and hand this cid to the hold by preempting the task.
  */
 static void credit_tick(s32 cid, struct task_struct *p, u64 now)
 {
+	struct cid_ctx __arena *cctx;
 	task_ctx_t *tctx;
+	s32 sib;
 
-	if (!latency_credit || !cid_valid(cid) ||
-	    !READ_ONCE(cid_ctx(cid)->curr_sleeper))
+	if (!latency_credit || !cid_valid(cid))
+		return;
+	smt_guard_tick(cid, now);
+	cctx = cid_ctx(cid);
+	if (!READ_ONCE(cctx->curr_sleeper) && !READ_ONCE(cctx->sg_sleeper))
 		return;
 	tctx = try_lookup_task_ctx(p);
-	if (tctx && !task_sleeper(p, tctx, now))
-		WRITE_ONCE(cid_ctx(cid)->curr_sleeper, 0);
+	if (!tctx || task_sleeper(p, tctx, now))
+		return;
+	WRITE_ONCE(cctx->curr_sleeper, 0);
+	sib = smt_guard_sibling(cid);
+	if (sib < 0 || !READ_ONCE(cctx->sg_sleeper))
+		return;
+	WRITE_ONCE(cctx->sg_sleeper, 0);
+	smt_guard_release(sib);
+	if (READ_ONCE(cid_ctx(sib)->sg_sleeper) && !is_pcpu_task(p))
+		scx_bpf_kick_cid(cid, SCX_KICK_PREEMPT);
 }
 
 /*
@@ -368,11 +388,60 @@ static s32 credit_pack_cid(const struct task_struct *p, task_ctx_t *tctx,
 	    nr_place_tiers < 2 || !cid_valid(target) || is_pcpu_task(p))
 		return target;
 	tier = cid_topo(target)->place_tier;
-	if (!tier || !task_credit_admitted(target, tctx, now))
+	if (!task_credit_admitted(target, tctx, now))
+		return target;
+
+	/*
+	 * Under the SMT guard a target whose core already runs a sleeper, on
+	 * the target itself or on its sibling, is no better than any other
+	 * core that is not an E-core: the wakee would share it with another
+	 * stage of the same pipeline. Wake-affine puts a wakee on its waker's
+	 * cid, so without this the stages of one pipeline pile onto the top
+	 * tier while the cores below it run hogs. At the clock a loaded
+	 * package runs every core at, a core of the next tier to itself is
+	 * worth more than half a core of the top one.
+	 */
+	if (smt_guard) {
+		s32 tsib = smt_guard_sibling(target);
+
+		if (READ_ONCE(cid_ctx(target)->sg_sleeper) ||
+		    (tsib >= 0 && READ_ONCE(cid_ctx(tsib)->sg_sleeper)))
+			tier = nr_place_tiers - 1;
+	}
+	if (!tier)
 		return target;
 
 	restricted = is_restricted(p);
 	start = __sync_fetch_and_add(&credit_pack_cursor, 1);
+
+	/*
+	 * With the guard, look for a whole core first: a cid whose sibling is
+	 * not running a sleeper either, so the guard gives the wakee the core.
+	 */
+	if (smt_guard) {
+		bpf_arena_for(t, 0, tier) {
+			bpf_arena_for(i, 0, nr_cids) {
+				s32 cid = (start + i) % nr_cids;
+				s32 sib;
+
+				if (cid_topo(cid)->place_tier != t)
+					continue;
+				if (READ_ONCE(cid_ctx(cid)->curr_sleeper))
+					continue;
+				sib = smt_guard_sibling(cid);
+				if (sib >= 0 &&
+				    READ_ONCE(cid_ctx(sib)->sg_sleeper))
+					continue;
+				if (!credit_available(cid_pack(cid)))
+					continue;
+				if (credit_crowded(cid))
+					continue;
+				if (restricted && !cid_allowed(p, cid))
+					continue;
+				return cid;
+			}
+		}
+	}
 	bpf_arena_for(t, 0, tier) {
 		bpf_arena_for(i, 0, nr_cids) {
 			s32 cid = (start + i) % nr_cids;
@@ -392,4 +461,177 @@ static s32 credit_pack_cid(const struct task_struct *p, task_ctx_t *tctx,
 	}
 
 	return target;
+}
+
+/*
+ * SMT guard.
+ *
+ * A thread of a pipeline stage that wins its CPU from a hog still shares the
+ * core with whatever runs on the sibling, and a hog there takes about half the
+ * core's throughput. The WebGL aquarium's stages need the throughput of about
+ * two whole cores between them: beside a hog on every CPU they ran at 22 to 24
+ * fps with the latency credit, and at 55 with two cores kept free by hand.
+ *
+ * So while a cid runs a sleeper, see task_sleeper(), its SMT sibling is kept
+ * from running a task that is not one: the sibling's current hog is preempted,
+ * and its dispatch declines to pick one, going idle instead. Two sleepers
+ * share a core as they would anyway, and a hog is held off for at most
+ * @smt_guard_max_ns at a time, so one that can only run there is not starved.
+ */
+
+/* Return the other thread of @cid's core, or -1 if there is none to guard. */
+static __always_inline s32 smt_guard_sibling(s32 cid)
+{
+	struct cid_topo __arena *topo;
+
+	if (!smt_guard || !smt_enabled || !cid_valid(cid))
+		return -1;
+	topo = cid_topo(cid);
+	if (topo->ranges.core_nr != 2)
+		return -1;
+	return cid == topo->ranges.core_base ? cid + 1 : topo->ranges.core_base;
+}
+
+/* End @sib's hold, and have it pick again. */
+static void smt_guard_release(s32 sib)
+{
+	struct cid_ctx __arena *sctx = cid_ctx(sib);
+
+	if (READ_ONCE(sctx->sg_held)) {
+		WRITE_ONCE(sctx->sg_held, 0);
+		scx_bpf_kick_cid(sib, SCX_KICK_IDLE);
+	}
+}
+
+/*
+ * Record what @cid now runs and act on it: a sleeper takes the core from a
+ * hog on the sibling, anything else releases a sibling held for this cid.
+ */
+static void smt_guard_running(s32 cid, const struct task_struct *p,
+			      const task_ctx_t *tctx, u64 now)
+{
+	struct cid_ctx __arena *cctx;
+	bool sleeper;
+	s32 sib;
+
+	sib = smt_guard_sibling(cid);
+	if (sib < 0)
+		return;
+	cctx = cid_ctx(cid);
+
+	/*
+	 * Running anything ends this cid's own hold, whether or not the task
+	 * came through ops.dispatch(). A task inserted into the local DSQ at
+	 * wakeup does not, and a hold left set would keep the cid out of the
+	 * idle mask the next time it went idle, with nothing left to release
+	 * it: wakeups would queue on it without ever kicking it.
+	 */
+	WRITE_ONCE(cctx->sg_held, 0);
+	WRITE_ONCE(cctx->sg_pinned, is_pcpu_task(p));
+	sleeper = task_sleeper(p, tctx, now);
+	WRITE_ONCE(cctx->sg_sleeper, sleeper);
+	if (!sleeper) {
+		cctx->sg_hold_since = 0;
+		smt_guard_release(sib);
+		return;
+	}
+	/* A hog that can run nowhere else is not held, see smt_guard_hold(). */
+	if (!READ_ONCE(cid_ctx(sib)->sg_sleeper) &&
+	    !READ_ONCE(cid_ctx(sib)->sg_pinned) &&
+	    !READ_ONCE(cid_ctx(sib)->sg_held) &&
+	    !scx_cid_idle_test(&eevdf_idle, sib))
+		scx_bpf_kick_cid(sib, SCX_KICK_PREEMPT);
+}
+
+/* @cid went idle: it runs no sleeper, so its sibling is free. */
+static void smt_guard_idle(s32 cid)
+{
+	s32 sib = smt_guard_sibling(cid);
+
+	if (sib < 0)
+		return;
+	WRITE_ONCE(cid_ctx(cid)->sg_sleeper, 0);
+	smt_guard_release(sib);
+}
+
+/*
+ * Release the sibling once its hold has lasted @smt_guard_max_ns. A held cid
+ * is idle and has no tick of its own; this cid, running the sleeper, does.
+ */
+static void smt_guard_tick(s32 cid, u64 now)
+{
+	s32 sib = smt_guard_sibling(cid);
+	struct cid_ctx __arena *sctx;
+	u64 since;
+
+	if (sib < 0)
+		return;
+	sctx = cid_ctx(sib);
+	since = READ_ONCE(sctx->sg_hold_since);
+	if (READ_ONCE(sctx->sg_held) &&
+	    (!since || now - since > smt_guard_max_ns))
+		smt_guard_release(sib);
+}
+
+/*
+ * Return whether ops.dispatch() on @cid should pick nothing and let the cid go
+ * idle, because its sibling runs a sleeper and what it would run here is not
+ * one.
+ *
+ * Only @prev and the head of the queue are looked at: a sleeper queued deeper
+ * waits for the head, as it would behind the hog. A crowded cid is never held,
+ * see credit_crowded(). The guard is for a core with a pipeline stage and a
+ * hog on it; a queue of hundreds needs the capacity, and holding such cids
+ * during a sleep storm left half the machine's cores idle.
+ *
+ * A task that can run on this cid only is never held. The cap bounds one
+ * hold, not how often holds come: with a sibling that runs a sleeper almost
+ * all the time, the cid runs one slice per hold, and a migratable hog is
+ * pulled elsewhere by the balancer, but a pinned task has nowhere to go. A
+ * nice 19 task pinned beside such a sibling ran 2 ms in 20 s, and one
+ * starved past the watchdog.
+ *
+ * A held cid stays out of the idle mask, see eevdf_update_idle(), or the next
+ * wakeup would take it and put a second pipeline stage on the core. It is
+ * released by the sibling, see smt_guard_running(), smt_guard_idle() and
+ * smt_guard_tick().
+ */
+static bool smt_guard_hold(s32 cid, struct task_struct *prev, bool has_prev,
+			   u64 now)
+{
+	struct cid_ctx __arena *cctx;
+	struct task_struct *head;
+	task_ctx_t *tctx;
+	s32 sib;
+	u64 tid;
+
+	sib = smt_guard_sibling(cid);
+	if (sib < 0)
+		return false;
+	cctx = cid_ctx(cid);
+	if (!READ_ONCE(cid_ctx(sib)->sg_sleeper) || credit_crowded(cid))
+		goto no_hold;
+	if (cctx->sg_hold_since && now - cctx->sg_hold_since > smt_guard_max_ns)
+		goto no_hold;
+	if (has_prev) {
+		tctx = try_lookup_task_ctx(prev);
+		if (is_pcpu_task(prev) ||
+		    (tctx && task_sleeper(prev, tctx, now)))
+			goto no_hold;
+	}
+	tid = cid_edq_peek_tid_owned(cid);
+	if (tid) {
+		head = scx_bpf_tid_to_task(tid);
+		tctx = head ? try_lookup_task_ctx(head) : NULL;
+		if ((head && is_pcpu_task(head)) ||
+		    (tctx && task_sleeper(head, tctx, now)))
+			goto no_hold;
+	}
+	if (!cctx->sg_hold_since)
+		cctx->sg_hold_since = now;
+	WRITE_ONCE(cctx->sg_held, 1);
+	return true;
+no_hold:
+	WRITE_ONCE(cctx->sg_held, 0);
+	return false;
 }

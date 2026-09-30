@@ -91,6 +91,8 @@ extern const volatile u64 latency_credit_burst_ns;
 extern const volatile u64 latency_credit_budget;
 extern const volatile bool no_latency_credit_pack;
 extern const volatile u32 latency_credit_max_queued;
+extern const volatile bool smt_guard;
+extern const volatile u64 smt_guard_max_ns;
 extern const volatile bool no_vref_update;
 extern const volatile bool no_delay_dequeue;
 extern const volatile bool no_delay_requeue;
@@ -389,6 +391,10 @@ struct cid_ctx {
 	u32 pressure_valid; /* a current demand window has been sampled */
 	u32 curr_idle;		/* it is a SCHED_IDLE task */
 	u32 curr_sleeper;	/* it is a sleeper, see task_sleeper() */
+	u32 sg_sleeper;		/* the same, for the SMT guard, see smt_guard_running() */
+	u32 sg_held;		/* held for the sibling, see smt_guard_hold() */
+	u32 sg_pinned;		/* it can run on this cid only, see smt_guard_hold() */
+	u64 sg_hold_since;	/* when the current hold began */
 	u32 curr_sched_idle;	/* that, or it is in an idle cgroup, see cid_sched_idle_target() */
 	u32 steal_cursor;
 	/* Persistent scans of this cid as a source. */

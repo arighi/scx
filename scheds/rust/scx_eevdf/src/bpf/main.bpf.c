@@ -342,6 +342,15 @@ const volatile bool no_latency_credit_pack;
 const volatile u32 latency_credit_max_queued = 4;
 
 /*
+ * Keep a task that does not sleep off the SMT sibling of a cid running one
+ * that does, see smt_guard_hold().
+ */
+const volatile bool smt_guard;
+
+/* The longest a cid is held for its sibling at a time, see smt_guard_hold(). */
+const volatile u64 smt_guard_max_ns = 20000000ULL;
+
+/*
  * Place tasks and test them for eligibility against the pack reference as
  * it stands, without the service the task running there has taken since
  * it was picked, see pack_vref_at().
@@ -830,6 +839,8 @@ void BPF_STRUCT_OPS(eevdf_dispatch, s32 cid, struct task_struct *prev)
 	 * ask the task for this CPU again, see keep_running().
 	 */
 	has_prev = prev && is_task_queued(prev);
+	if (smt_guard_hold(cid, prev, has_prev, now))
+		return;
 	if (READ_ONCE(cid_ctx(cid)->active_balance_pending) == 2 &&
 	    __sync_val_compare_and_swap(&cid_ctx(cid)->active_balance_pending,
 					    2, 0) == 2) {
