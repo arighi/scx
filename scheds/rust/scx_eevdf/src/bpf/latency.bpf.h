@@ -10,6 +10,7 @@
 #include "eevdf.bpf.h"
 
 static void credit_tick(s32 cid, struct task_struct *p, u64 now);
+static void cid_set_hog(s32 cid, bool hog);
 static __always_inline s32 smt_guard_sibling(s32 cid);
 static void smt_guard_running(s32 cid, const struct task_struct *p,
 			      const task_ctx_t *tctx, u64 now);

@@ -1559,6 +1559,7 @@ void BPF_STRUCT_OPS(eevdf_update_idle, s32 cid, bool idle)
 		if (!READ_ONCE(cid_ctx(cid)->sg_held))
 			cid_idle_set(cid);
 		smt_guard_idle(cid);
+		cid_set_hog(cid, false);
 		/*
 		 * The tick stops with the CPU: record the empty pack now, or the
 		 * idle period is averaged in at the weight of the last tick.

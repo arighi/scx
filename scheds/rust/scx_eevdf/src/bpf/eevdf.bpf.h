@@ -101,6 +101,7 @@ extern const volatile u64 enq_blocked;
 extern const volatile bool no_hrtick;
 
 extern u32 nr_sched_idle_curr;
+extern volatile u32 nr_hog_cids;
 extern volatile u64 nr_sis_updates;
 extern volatile u64 sis_scan_sum;
 extern volatile u64 nr_credit_grants;
@@ -391,6 +392,7 @@ struct cid_ctx {
 	u32 pressure_valid; /* a current demand window has been sampled */
 	u32 curr_idle;		/* it is a SCHED_IDLE task */
 	u32 curr_sleeper;	/* it is a sleeper, see task_sleeper() */
+	u32 curr_hog;		/* it is not, and is counted in nr_hog_cids */
 	u32 sg_sleeper;		/* the same, for the SMT guard, see smt_guard_running() */
 	u32 sg_held;		/* held for the sibling, see smt_guard_hold() */
 	u32 sg_pinned;		/* it can run on this cid only, see smt_guard_hold() */

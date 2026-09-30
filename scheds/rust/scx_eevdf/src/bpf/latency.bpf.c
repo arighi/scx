@@ -243,6 +243,28 @@ static void smt_guard_release(s32 sib);
 static void smt_guard_tick(s32 cid, u64 now);
 
 /*
+ * Record whether @cid runs a task that is not a sleeper, and keep
+ * @nr_hog_cids in step. Only the cid's own CPU calls this, from
+ * ops.running(), ops.tick() and ops.update_idle(), so the flag needs no
+ * atomic and the shared count is written only when the flag changes.
+ */
+static void cid_set_hog(s32 cid, bool hog)
+{
+	struct cid_ctx __arena *cctx;
+
+	if (!latency_credit || !cid_valid(cid))
+		return;
+	cctx = cid_ctx(cid);
+	if (READ_ONCE(cctx->curr_hog) == hog)
+		return;
+	WRITE_ONCE(cctx->curr_hog, hog);
+	if (hog)
+		__sync_fetch_and_add(&nr_hog_cids, 1);
+	else
+		__sync_fetch_and_sub(&nr_hog_cids, 1);
+}
+
+/*
  * A running task stops being a sleeper without switching out when it
  * computes past its burst, see task_sleeper(), and ops.running() is the only
  * other place @curr_sleeper is set. Take it back at the tick.
@@ -267,6 +289,7 @@ static void credit_tick(s32 cid, struct task_struct *p, u64 now)
 	if (!tctx || task_sleeper(p, tctx, now))
 		return;
 	WRITE_ONCE(cctx->curr_sleeper, 0);
+	cid_set_hog(cid, true);
 	sib = smt_guard_sibling(cid);
 	if (sib < 0 || !READ_ONCE(cctx->sg_sleeper))
 		return;
@@ -386,6 +409,14 @@ static s32 credit_pack_cid(const struct task_struct *p, task_ctx_t *tctx,
 
 	if (!latency_credit || no_latency_credit_pack || !asym_packing ||
 	    nr_place_tiers < 2 || !cid_valid(target) || is_pcpu_task(p))
+		return target;
+	/*
+	 * Every destination runs a task that does not sleep. With none running
+	 * anywhere there is nothing to find, and the scans below would cost a
+	 * wakeup-heavy load a walk of every cid on each wakeup, on the waker's
+	 * CPU.
+	 */
+	if (!READ_ONCE(nr_hog_cids))
 		return target;
 	tier = cid_topo(target)->place_tier;
 	if (!task_credit_admitted(target, tctx, now))
@@ -526,20 +557,29 @@ static void smt_guard_running(s32 cid, const struct task_struct *p,
 	 * idle mask the next time it went idle, with nothing left to release
 	 * it: wakeups would queue on it without ever kicking it.
 	 */
-	WRITE_ONCE(cctx->sg_held, 0);
-	WRITE_ONCE(cctx->sg_pinned, is_pcpu_task(p));
+	if (READ_ONCE(cctx->sg_held))
+		WRITE_ONCE(cctx->sg_held, 0);
+	if (READ_ONCE(cctx->sg_pinned) != is_pcpu_task(p))
+		WRITE_ONCE(cctx->sg_pinned, is_pcpu_task(p));
 	sleeper = task_sleeper(p, tctx, now);
-	WRITE_ONCE(cctx->sg_sleeper, sleeper);
+	if (READ_ONCE(cctx->sg_sleeper) != sleeper)
+		WRITE_ONCE(cctx->sg_sleeper, sleeper);
 	if (!sleeper) {
-		cctx->sg_hold_since = 0;
+		if (cctx->sg_hold_since)
+			cctx->sg_hold_since = 0;
 		smt_guard_release(sib);
 		return;
 	}
-	/* A hog that can run nowhere else is not held, see smt_guard_hold(). */
-	if (!READ_ONCE(cid_ctx(sib)->sg_sleeper) &&
+	/*
+	 * Kick a sibling that runs a hog, not one that merely is not running
+	 * a sleeper: between two tasks, or on its way out of idle, its flag
+	 * reads the same, and a kick there only costs it a reschedule. So
+	 * does a kick to a hog that can run nowhere else, which is not held,
+	 * see smt_guard_hold().
+	 */
+	if (READ_ONCE(nr_hog_cids) && READ_ONCE(cid_ctx(sib)->curr_hog) &&
 	    !READ_ONCE(cid_ctx(sib)->sg_pinned) &&
-	    !READ_ONCE(cid_ctx(sib)->sg_held) &&
-	    !scx_cid_idle_test(&eevdf_idle, sib))
+	    !READ_ONCE(cid_ctx(sib)->sg_held))
 		scx_bpf_kick_cid(sib, SCX_KICK_PREEMPT);
 }
 
@@ -550,7 +590,8 @@ static void smt_guard_idle(s32 cid)
 
 	if (sib < 0)
 		return;
-	WRITE_ONCE(cid_ctx(cid)->sg_sleeper, 0);
+	if (READ_ONCE(cid_ctx(cid)->sg_sleeper))
+		WRITE_ONCE(cid_ctx(cid)->sg_sleeper, 0);
 	smt_guard_release(sib);
 }
 
@@ -609,7 +650,13 @@ static bool smt_guard_hold(s32 cid, struct task_struct *prev, bool has_prev,
 	if (sib < 0)
 		return false;
 	cctx = cid_ctx(cid);
-	if (!READ_ONCE(cid_ctx(sib)->sg_sleeper) || credit_crowded(cid))
+	/*
+	 * With no hog running anywhere, a hog at the head here is let run:
+	 * it is then counted, and the next pick holds against it. Until then
+	 * a load of sleepers pays one read per pick, not a queue peek.
+	 */
+	if (!READ_ONCE(nr_hog_cids) || !READ_ONCE(cid_ctx(sib)->sg_sleeper) ||
+	    credit_crowded(cid))
 		goto no_hold;
 	if (cctx->sg_hold_since && now - cctx->sg_hold_since > smt_guard_max_ns)
 		goto no_hold;
@@ -632,6 +679,7 @@ static bool smt_guard_hold(s32 cid, struct task_struct *prev, bool has_prev,
 	WRITE_ONCE(cctx->sg_held, 1);
 	return true;
 no_hold:
-	WRITE_ONCE(cctx->sg_held, 0);
+	if (READ_ONCE(cctx->sg_held))
+		WRITE_ONCE(cctx->sg_held, 0);
 	return false;
 }

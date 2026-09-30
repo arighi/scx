@@ -438,6 +438,14 @@ u64 arena_pages_freed;
  */
 u32 nr_sched_idle_curr;
 
+/*
+ * Number of cids running a task that is not a sleeper, see cid_set_hog().
+ * Credit packing and the SMT guard only ever act against such a task, and
+ * a workload made of sleepers alone, a request-response benchmark or a
+ * desktop at rest, keeps this at zero: both then cost a single read.
+ */
+volatile u32 nr_hog_cids __hot_written;
+
 static bool arena_is_ours(void *map)
 {
 	return arena_map_id &&
