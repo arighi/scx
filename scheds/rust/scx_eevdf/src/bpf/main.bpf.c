@@ -330,6 +330,12 @@ const volatile u64 latency_credit_budget = 1024;
 const volatile bool no_latency_credit_pack;
 
 /*
+ * Queue length at which a cid stops granting the credit, see
+ * task_place_offset(). 0 grants it however long the queue.
+ */
+const volatile u32 latency_credit_max_queued = 4;
+
+/*
  * Place tasks and test them for eligibility against the pack reference as
  * it stands, without the service the task running there has taken since
  * it was picked, see pack_vref_at().

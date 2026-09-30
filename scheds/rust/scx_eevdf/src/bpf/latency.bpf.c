@@ -198,6 +198,16 @@ static void credit_charge(pack_t *pk, task_ctx_t *tctx, u64 delta)
 }
 
 /*
+ * Whether @cid has queued enough tasks to stop granting the credit, see
+ * task_place_offset().
+ */
+static __always_inline bool credit_crowded(s32 cid)
+{
+	return latency_credit_max_queued && cid_valid(cid) &&
+	       cid_queue_nr(cid) >= latency_credit_max_queued;
+}
+
+/*
  * Return whether @tctx may borrow on @cid. The sleep window is always met by
  * a wakeup; it also defines the current tasks that packing leaves alone.
  */
@@ -229,6 +239,22 @@ static s64 task_place_offset(s32 cid, pack_t *pk, const struct task_struct *p,
 	s64 credit;
 
 	if (!latency_credit)
+		return tctx->se.vlag;
+
+	/*
+	 * A credited join pulls the pack's reference down, and the next one
+	 * pulls it down again. A task queued behind the reference, one that
+	 * overran its request and is waiting to become eligible, is kept
+	 * waiting for as long as the joins keep coming: under a sleep storm
+	 * that is until the watchdog fires. A crowded pack therefore places
+	 * the wakee at the lag it earned. Ordinary EEVDF conserves the
+	 * reference, and every waiter becomes eligible in its turn.
+	 *
+	 * The limit is a queue length rather than a budget because what the
+	 * credit is for, a pipeline thread beside a hog, queues one or two
+	 * tasks, and what it must not do happens on a queue of hundreds.
+	 */
+	if (credit_crowded(cid))
 		return tctx->se.vlag;
 
 	if (bounded) {
@@ -275,10 +301,13 @@ static s64 task_place_offset(s32 cid, pack_t *pk, const struct task_struct *p,
  * A task pinned to one CPU, or one whose target is already in the top
  * tier, is not moved.
  *
- * A cid out of credit budget is left alone too. The move is worth making
- * only because the credit wins the CPU on arrival; without it the wakee is
- * merely queued behind a hog it did not choose, which is worse than the
- * target the wakeup picked for itself.
+ * A cid out of credit budget is left alone too, and so is a crowded one. The
+ * move is worth making only because the credit wins the CPU on arrival;
+ * without it the wakee is merely queued behind a hog it did not choose, which
+ * is worse than the target the wakeup picked for itself. A crowded cid would
+ * also collect every admitted wakee of a storm: its current task being the
+ * one that does not sleep is what makes it a destination, and nothing else
+ * the scan looks at changes as the queue grows.
  */
 static s32 credit_pack_cid(const struct task_struct *p, task_ctx_t *tctx,
 			   s32 target, u64 now)
@@ -304,6 +333,8 @@ static s32 credit_pack_cid(const struct task_struct *p, task_ctx_t *tctx,
 			if (READ_ONCE(cid_ctx(cid)->curr_sleeper))
 				continue;
 			if (!credit_available(cid_pack(cid)))
+				continue;
+			if (credit_crowded(cid))
 				continue;
 			if (restricted && !cid_allowed(p, cid))
 				continue;

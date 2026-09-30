@@ -573,6 +573,17 @@ struct Opts {
     #[clap(long, action = clap::ArgAction::SetTrue)]
     no_latency_credit_pack: bool,
 
+    /// Queue length at which a CPU stops granting the latency credit.
+    ///
+    /// Every credited wakeup pulls the CPU's virtual-time reference down, and
+    /// a task queued behind the reference waits until it catches up. Under a
+    /// stream of credited wakeups it never does: a sleep storm starved such
+    /// tasks until the watchdog fired. A CPU with this many tasks queued places
+    /// wakees by ordinary EEVDF instead, and credit packing does not send them
+    /// there. 0 grants the credit however long the queue.
+    #[clap(long, default_value = "4")]
+    latency_credit_max_queued: u32,
+
     /// Never interrupt a running task for a woken one with an earlier deadline.
     ///
     /// Every task then runs until its slice ends or it blocks, and a woken task
@@ -1153,6 +1164,7 @@ impl<'a> Scheduler<'a> {
         rodata.latency_credit_sleep_ns = opts.latency_credit_sleep_ms * 1000000;
         rodata.latency_credit_budget = opts.latency_credit_budget_pct * 1024 / 100;
         rodata.no_latency_credit_pack = opts.no_latency_credit_pack;
+        rodata.latency_credit_max_queued = opts.latency_credit_max_queued;
         rodata.no_vref_update = opts.no_vref_update;
 
         // Follow the capacity classes selected by the kernel unless explicitly

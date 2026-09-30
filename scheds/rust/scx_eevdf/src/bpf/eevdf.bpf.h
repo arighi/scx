@@ -89,6 +89,7 @@ extern const volatile u64 latency_credit_ns;
 extern const volatile u64 latency_credit_sleep_ns;
 extern const volatile u64 latency_credit_budget;
 extern const volatile bool no_latency_credit_pack;
+extern const volatile u32 latency_credit_max_queued;
 extern const volatile bool no_vref_update;
 extern const volatile bool no_delay_dequeue;
 extern const volatile bool no_delay_requeue;
