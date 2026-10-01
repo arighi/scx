@@ -496,6 +496,17 @@ struct Opts {
     #[clap(long, action = clap::ArgAction::SetTrue)]
     no_delay_requeue: bool,
 
+    /// Let a task blocked on a mutex block instead of donating its turn.
+    ///
+    /// With proxy execution, a task that blocks on a mutex stays runnable as
+    /// a donor, and when it is picked its scheduling context runs the mutex
+    /// owner, which gets the lock released sooner. The donor keeps its place
+    /// in the queue and is charged for what the owner runs on its behalf, as
+    /// fair.c does. This makes such a task block and leave the queue instead.
+    /// Proxy execution is used only on kernels that support it for sched_ext.
+    #[clap(long, action = clap::ArgAction::SetTrue)]
+    no_proxy_exec: bool,
+
     /// Notice the end of a request at the tick after it, not when it happens.
     ///
     /// A request is normally ended on the spot by a timer armed for the
@@ -1187,6 +1198,33 @@ impl<'a> Scheduler<'a> {
             );
         }
 
+        // Proxy execution: SCX_OPS_ENQ_BLOCKED hands mutex-blocked donors to
+        // ops.enqueue() with SCX_ENQ_BLOCKED. Both read as zero on a kernel
+        // without it, which leaves proxy execution off.
+        let (ops_enq_blocked, enq_blocked) = if opts.no_proxy_exec {
+            (0, 0)
+        } else {
+            match (
+                compat::read_enum("scx_ops_flags", "SCX_OPS_ENQ_BLOCKED"),
+                compat::read_enum("scx_enq_flags", "SCX_ENQ_BLOCKED"),
+            ) {
+                (Ok(ops), Ok(enq)) => (ops, enq),
+                _ => (0, 0),
+            }
+        };
+        skel.maps.rodata_data.as_mut().unwrap().proxy_exec = enq_blocked != 0;
+        skel.maps.rodata_data.as_mut().unwrap().enq_blocked = enq_blocked;
+        report.row(
+            "proxy execution",
+            if enq_blocked != 0 {
+                "on"
+            } else if opts.no_proxy_exec {
+                "off (--no-proxy-exec)"
+            } else {
+                "off (not supported by the kernel)"
+            },
+        );
+
         // Set scheduler flags.
         //
         // SCX_OPS_BUILTIN_IDLE_PER_NODE is left out: a cid-form scheduler
@@ -1195,7 +1233,8 @@ impl<'a> Scheduler<'a> {
             | *compat::SCX_OPS_ENQ_MIGRATION_DISABLED
             | *compat::SCX_OPS_ALLOW_QUEUED_WAKEUP
             | *compat::SCX_OPS_ENQ_EXITING
-            | *compat::SCX_OPS_TID_TO_TASK;
+            | *compat::SCX_OPS_TID_TO_TASK
+            | ops_enq_blocked;
         skel.struct_ops.eevdf_ops_mut().flags = flags;
         skel.struct_ops.eevdf_ops_cgroup_mut().flags = flags;
 
