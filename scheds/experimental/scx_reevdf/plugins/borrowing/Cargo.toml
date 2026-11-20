@@ -1,0 +1,29 @@
+[package]
+name = "scx_reevdf_borrowing"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "GPL-2.0-only"
+
+[workspace]
+
+[features]
+bpf = ["dep:scx_reevdf_kernel", "dep:scx_rustsched"]
+topo_size = ["scx_reevdf_kernel?/topo_size", "scx_rustsched?/topo_size"]
+
+[dependencies]
+scx_reevdf_kernel = { path = "../../bpf", optional = true }
+scx_rustsched = { path = "../../../../../rust/scx_rustsched", optional = true }
+
+[[bin]]
+name = "scx_reevdf_borrowing"
+path = "src/main.rs"
+required-features = ["bpf"]
+test = false
+bench = false
+
+[profile.release]
+debug = 2
+lto = true
+codegen-units = 1
+panic = "abort"

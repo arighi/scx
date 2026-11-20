@@ -1,0 +1,37 @@
+# Borrowing plugin imports.
+# Increment contract when reevdf state or callback requirements change.
+format=1
+host=scx_reevdf
+contract=3
+runtime=1
+callback=enqueue
+map=arena
+map=task_refs
+map=cgroup_refs
+map=.rodata.config
+map=.rodata.param.*
+map=.data.astats
+map=.data.uei
+map=.data.uei_dump
+map=.data.slab
+map=.data.cids
+map=.data.idle
+map=.data.queues
+map=.data.uqueues
+map=.data.tiers
+map=.data.tiertab
+map=.data.loopone
+map=.data.slice
+map=.data.packs
+map=.data.schedidle
+map=.data.coresched
+map=.data.sstats
+map=.data.balance
+map=.data.overload
+map=.data.loads
+map=.data.bandwidth
+map=.data.bwslots
+map=.data.cgroups
+map=hrticks
+map=bw_timers
+counter=borrowing.wakeups:.data.plugin_borrow
