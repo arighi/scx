@@ -102,6 +102,132 @@ fn parameters(list: TokenStream) -> usize {
     if any { count + 1 } else { 0 }
 }
 
+/// Emit standalone struct_ops entry points listed by a host contract.
+/// The manifest path is relative to the BPF crate's Cargo.toml. The same
+/// file can be exported by the host's Scheduler::plugin_contract().
+/// Lifecycle callbacks remain the host runtime's responsibility.
+#[proc_macro_attribute]
+pub fn plugin(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    let arguments: Vec<_> = arguments.into_iter().collect();
+    if arguments.len() != 3
+        && !(arguments.len() == 4
+            && matches!(&arguments[3], TokenTree::Punct(p) if p.as_char() == ','))
+    {
+        return error("#[plugin] accepts only manifest = \"path\"");
+    }
+    let Some(path) = argument(&arguments, "manifest") else {
+        return error("#[plugin] requires manifest = \"path\"");
+    };
+    let Some(path) = path.strip_prefix('"').and_then(|p| p.strip_suffix('"')) else {
+        return error("#[plugin] manifest must be a string literal");
+    };
+    let path = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join(path);
+    let manifest = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) => return error(&format!("read plugin manifest: {err}")),
+    };
+    let tokens: Vec<_> = item.clone().into_iter().collect();
+    let Some(start) = tokens
+        .iter()
+        .position(|t| matches!(t, TokenTree::Ident(i) if i.to_string() == "impl"))
+    else {
+        return error("#[plugin] goes on impl Name { ... }");
+    };
+    let (Some(TokenTree::Ident(ty)), Some(TokenTree::Group(body))) =
+        (tokens.get(start + 1), tokens.get(start + 2))
+    else {
+        return error("#[plugin] goes on impl Name { ... }");
+    };
+    let functions: Vec<_> = body.stream().into_iter().collect();
+    let mut output = format!(
+        "pub struct {ty};
+         #[used]
+         #[unsafe(no_mangle)]
+         #[unsafe(link_section = \".scx.plugin\")]
+         pub static SCX_PLUGIN_MANIFEST: [u8; {len}] = *include_bytes!({path:?});\n",
+        len = manifest.len(),
+        path = path.to_str().unwrap(),
+    );
+    let mut count = 0;
+    let mut members = String::new();
+    for callback in manifest
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("callback="))
+    {
+        if !callback
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'_')
+        {
+            return error("invalid plugin callback name");
+        }
+        let Some((_, member, sleepable)) = CALLBACKS.iter().find(|(name, ..)| *name == callback)
+        else {
+            return error(&format!("unknown plugin callback {callback}"));
+        };
+        if matches!(
+            callback,
+            "init"
+                | "exit"
+                | "init_task"
+                | "exit_task"
+                | "enable"
+                | "dequeue"
+                | "dispatch"
+                | "update_idle"
+        ) {
+            return error(&format!("{callback} owns runtime lifecycle work"));
+        }
+        let Some(args) = functions.windows(3).find_map(|window| match window {
+            [
+                TokenTree::Ident(keyword),
+                TokenTree::Ident(name),
+                TokenTree::Group(args),
+            ] if keyword.to_string() == "fn" && name.to_string() == callback => {
+                Some(parameters(args.stream()))
+            }
+            _ => None,
+        }) else {
+            return error(&format!("plugin does not implement {callback}"));
+        };
+        let args = (0..args)
+            .map(|i| format!("::scx_rustsched::sched::Arg::arg(context, {i})"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let section = if *sleepable {
+            "struct_ops.s"
+        } else {
+            "struct_ops"
+        };
+        let member = member.trim_start_matches("r#");
+        let field = if member == "yield" { "r#yield" } else { member };
+        members += &format!("{field}: scx_{callback},\n");
+        output += &format!(
+            "#[unsafe(no_mangle)]
+             #[unsafe(link_section = \"{section}/{member}\")]
+             pub unsafe extern \"C\" fn scx_{callback}(context: *const u64) -> u64 {{
+                 ::scx_rustsched::sched::enter();
+                 unsafe {{ ::scx_rustsched::sched::Ret::ret({ty}::{callback}({args})) }}
+             }}\n"
+        );
+        count += 1;
+    }
+    if count == 0 {
+        return error("plugin manifest declares no callbacks");
+    }
+    // libbpf derives struct_ops verifier targets from this table. It is
+    // created but never populated or attached; only the host table is.
+    output += &format!(
+        "::scx_rustsched::ops_map! {{
+             plugin_ops: sched_ext_ops_cid in \".struct_ops.link\",
+             name: b\"plugin\", flags: 0, timeout_ms: 0, dump_len: 0,
+             {{ {members} }}
+         }}\n"
+    );
+    let mut output: TokenStream = output.parse().expect("generate plugin entry points");
+    output.extend(item);
+    output
+}
+
 /// Declare a sched_ext scheduler from the callbacks of an `impl` block.
 ///
 /// ```ignore

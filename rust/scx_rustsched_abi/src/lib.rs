@@ -13,6 +13,10 @@
 
 #![no_std]
 
+/// ABI of independently loaded runtime users. Bump when shared runtime
+/// layouts or their lifetime rules change incompatibly.
+pub const PLUGIN_ABI: u32 = 1;
+
 /// Words in the table: the entries below, and room for more.
 pub const WORDS: usize = 64;
 

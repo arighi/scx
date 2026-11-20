@@ -6362,6 +6362,7 @@ dependencies = [
  "libbpf-rs 0.27.2",
  "libc",
  "log",
+ "object 0.40.0",
  "scx_rustsched_abi",
  "scx_rustsched_macros",
  "scx_stats",

@@ -99,7 +99,7 @@ pub mod var;
 
 pub use ops::{cpumask, task_struct};
 pub use sched::{global, scheduler};
-pub use scx_rustsched_macros::opts;
+pub use scx_rustsched_macros::{opts, plugin};
 
 /// What a scheduler written with `#[scheduler]` uses, see `sched`.
 pub mod prelude {

@@ -13,6 +13,7 @@ use std::{
     collections::BTreeMap,
     ffi::{CString, OsStr},
     os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd},
+    path::PathBuf,
     ptr::NonNull,
     sync::{
         Arc,
@@ -46,6 +47,7 @@ use scx_utils::{UserExitInfo, libbpf_clap_opts::LibbpfOpts};
 #[path = "../../scx_rustsched/src/edq.rs"]
 pub mod edq;
 mod kfunc_protos;
+pub mod plugin;
 mod queues;
 pub mod tiers;
 
@@ -56,13 +58,44 @@ pub use tiers::Tiers;
 /// The attached scheduler's object, shared. What reads the arena keeps a
 /// clone, and with it the arena's mapping, which goes with the object.
 #[derive(Clone)]
-pub struct Loaded(Arc<Object>);
+pub struct Loaded(Arc<LoadedObjects>);
+
+struct LoadedObjects {
+    object: Object,
+    plugins: plugin::Providers,
+}
+
+impl Loaded {
+    /// Counters declared by plugin manifests, independent of host policy.
+    pub fn plugin_counters(&self) -> BTreeMap<String, u64> {
+        self.0
+            .plugins
+            .counters
+            .iter()
+            .map(|(name, (provider, section))| {
+                let mut bytes = [0_u8; 8];
+                if let Some(map) = self.0.plugins.objects[*provider]
+                    .maps()
+                    .find(|map| map.name() == OsStr::new(section))
+                {
+                    let _ = map.lookup_into(&0_u32.to_ne_bytes(), &mut bytes, MapFlags::ANY);
+                }
+                (name.clone(), u64::from_ne_bytes(bytes))
+            })
+            .collect()
+    }
+
+    /// Loaded provider objects, for a scheduler's plugin-specific metrics.
+    pub fn plugin_objects(&self) -> impl Iterator<Item = &Object> {
+        self.0.plugins.objects.iter()
+    }
+}
 
 impl std::ops::Deref for Loaded {
     type Target = Object;
 
     fn deref(&self) -> &Object {
-        &self.0
+        &self.0.object
     }
 }
 
@@ -890,6 +923,22 @@ impl Default for OpsProfiler {
 }
 
 impl OpsProfiler {
+    /// Account the programs actually selected by a composed scheduler.
+    pub fn sample_loaded(&mut self, loaded: &Loaded) -> BTreeMap<String, OpStats> {
+        let mut result = self.sample(loaded);
+        for (index, object) in loaded.0.plugins.objects.iter().enumerate() {
+            let selected = self.sample(object);
+            for (callback, provider) in &loaded.0.plugins.callbacks {
+                if *provider == index
+                    && let Some(stats) = selected.get(callback)
+                {
+                    result.insert(callback.clone(), *stats);
+                }
+            }
+        }
+        result
+    }
+
     /// How long without a stats request before the accounting is dropped.
     const IDLE: Duration = Duration::from_secs(5);
 
@@ -1314,6 +1363,8 @@ pub struct RunOptions {
     pub stats: Option<f64>,
     /// The scheduler's version, for `Scheduler::attached()`.
     pub version: &'static str,
+    /// BPF plugin objects, composed before scheduler registration.
+    pub plugins: Vec<PathBuf>,
 }
 
 /// How the CPUs' capacities and packing ranks are read for the scheduler,
@@ -1412,6 +1463,11 @@ impl Stats {
 /// default, so `impl Scheduler for Opts {}` is a scheduler with nothing
 /// but the tunables its options name.
 pub trait Scheduler: clap::Args {
+    /// Explicit callback and map exports. None disables plugins.
+    fn plugin_contract(&self) -> Option<&'static str> {
+        None
+    }
+
     /// Set the tunables no option sets by its name, see `main!`.
     fn settings(&self, _params: &mut Params) -> Result<()> {
         Ok(())
@@ -1601,7 +1657,8 @@ pub fn run<S: Scheduler>(
     matches: &clap::ArgMatches,
     scheduler: &S,
 ) -> Result<()> {
-    let bytes = if sized_topology()? { sized } else { legacy };
+    let sized_topology = sized_topology()?;
+    let bytes = if sized_topology { sized } else { legacy };
     let mut open = open(name, bytes, &options.libbpf, options.verbose)?;
     let dump_len = match options.exit_dump_len {
         0 => declared_dump_len(name, &mut open, bytes)?,
@@ -1642,7 +1699,27 @@ pub fn run<S: Scheduler>(
     set_ops_flags(name, &mut open, bytes, ops, flags)?;
     config[config::OPS_FLAGS] = flags;
     set_config(&mut open, &config)?;
+    let plan = if options.plugins.is_empty() {
+        None
+    } else {
+        Some(plugin::Plan::open(
+            scheduler.plugin_contract(),
+            options,
+            sized_topology,
+        )?)
+    };
+    let table = plan
+        .as_ref()
+        .map(|_| plugin::Table::capture(&mut open, bytes, ops))
+        .transpose()?;
     let mut object = open.load().context("load Rust BPF object")?;
+    let providers = plan
+        .map(|plan| plan.load(&object))
+        .transpose()?
+        .unwrap_or_default();
+    if let Some(table) = &table {
+        table.populate(&object, &providers, ops)?;
+    }
     if options.verify {
         println!("Rust BPF object verified successfully");
         return Ok(());
@@ -1653,8 +1730,25 @@ pub fn run<S: Scheduler>(
     let tiers = publish_tiers(&mut object, &scheduler.capacity())
         .inspect_err(|error| warn!("CPU capacities and ranks not read: {error:#}"))
         .ok();
-    let link = attach(&mut object, ops)?;
-    let object = Loaded(Arc::new(object));
+    // Both guards own their link; only one is populated. Keep the guard
+    // outside Loaded so unregistration precedes statistics and map teardown.
+    let link = if table.is_none() {
+        Some(attach(&mut object, ops)?)
+    } else {
+        None
+    };
+    let plugin_link = if table.is_some() {
+        Some(plugin::attach(&object, ops)?)
+    } else {
+        None
+    };
+    let object = Loaded(Arc::new(LoadedObjects {
+        object,
+        plugins: providers,
+    }));
+    // Move the guards after Loaded so error returns also detach before
+    // releasing the objects and their userspace arena mappings.
+    let link = (link, plugin_link);
     scheduler.attached(&Attached {
         name,
         version: options.version,
@@ -1750,6 +1844,12 @@ fn exit_summary(object: &Object) -> Result<Option<String>> {
 /// The options every scheduler takes, beside its own.
 #[derive(clap::Parser)]
 struct Cli {
+    #[arg(
+        long = "plugin",
+        value_name = "BPF_OBJECT",
+        help = "Replace exported callbacks with a BPF plugin (repeatable)"
+    )]
+    plugins: Vec<PathBuf>,
     #[arg(short = 'v', long, help = "Enable libbpf debug output")]
     verbose: bool,
     #[arg(short = 'V', long, help = "Print the scheduler version and exit")]
@@ -1878,6 +1978,7 @@ pub fn cli<S: Scheduler>(
             timeout_ms: options.timeout_ms,
             stats: options.stats,
             version,
+            plugins: options.plugins,
         },
         &shutdown,
         &matches,

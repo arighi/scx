@@ -24,5 +24,6 @@ ctrlc = { version = "3", features = ["termination"] }
 libbpf-rs = "=0.27.2"
 libc = "0.2"
 log = "0.4"
+object = { version = "0.40", default-features = false, features = ["read", "elf"] }
 serde = "1"
 simplelog = "0.12"

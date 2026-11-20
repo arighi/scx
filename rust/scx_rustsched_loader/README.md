@@ -156,3 +156,99 @@ the time.
 `Scheduler::runtime()` returns what the scheduler asks of the runtime, a
 mask of `config::runtime`'s bits, and `Scheduler::capacity()` how the
 CPUs' capacities and packing ranks are read.
+
+## Load-time plugins
+
+`--plugin PATH` loads a plugin archive (`.bpf.a`) or a standalone BPF ELF
+object (`.bpf.o`) that replaces callbacks exported by the scheduler.
+Repeat the option for disjoint callback sets. Conflicts are
+errors; command-line order does not give a plugin precedence. `--verify`
+loads the providers and populates the composed table without registering a
+scheduler. Initialization and scheduling behavior require an attached test.
+
+An archive is a standard `ar` file containing `legacy.bpf.o` and
+`sized.bpf.o`. The loader selects the same topology ABI as the host, then
+opens only that member with libbpf. Missing variants, duplicate members,
+unexpected member names and thin archives are rejected. Selection depends
+on the contents rather than the filename, and adds no runtime dispatch.
+
+A scheduler opts in by returning a manifest from `plugin_contract()`:
+
+```rust,ignore
+fn plugin_contract(&self) -> Option<&'static str> {
+    Some(include_str!("../plugin.contract"))
+}
+```
+
+The manifest describes the host identity, its semantic contract version,
+the runtime ABI, and explicit callback and map exports:
+
+```text
+format=1
+host=my_scheduler
+contract=1
+runtime=1
+callback=enqueue
+map=arena
+map=task_refs
+map=.rodata.config
+map=.rodata.param.*
+```
+
+The plugin embeds an import manifest of the same format, with the callbacks
+and maps it needs. Its imports must be subsets of the host's exports. The
+runtime ABI must equal `scx_rustsched_abi::PLUGIN_ABI`. A host contract is
+scheduler-specific: bump it when arena layouts or callback semantics change.
+The verifier and layout checks do not establish semantic compatibility.
+
+`#[scx_rustsched::plugin(manifest = "path")]` generates standalone callback
+entries from an `impl` block, with the same typed arguments and returns as
+`#[scheduler]`. The path is relative to the BPF crate's Cargo.toml. Only
+callbacks listed in the manifest become entries; ordinary code is inlined
+or called as BPF subprograms. Use `scx_rustsched_build::build_plugin()` for
+the existing kfunc/BTF fixups and object variants. The host build script
+must track manifest changes with `cargo:rerun-if-changed`.
+
+The initial implementation supports CID-form callbacks. It protects the
+framework lifecycle callbacks: init, exit, init_task, exit_task, enable,
+dequeue, dispatch and update_idle. Replacing a callback replaces all of it,
+including any scheduler accounting it performs. Plugins cannot call through
+to the original implementation or change scheduler identity and ops flags.
+
+Imported maps reuse the host's FDs before plugin program loading. Map types,
+flags, dimensions, map_extra and BTF layouts must match; runtime-sized entry
+counts and the exit dump buffer are adjusted to the host. Matching sizes
+alone are insufficient. The `.rodata.param.*` pattern imports the host's
+tunables; other patterns are unsupported. Map entries unused by a particular
+compiled variant are allowed in the manifest. All state reached through a
+plugin's APIs must be exported, including allocator metadata and task/cgroup
+references, not just the arena map.
+
+Read-only literal data remains private. Deliberately private mutable maps
+use `plugin_` names or `.data.plugin`/`.bss.plugin` sections. Other undeclared
+maps are rejected, so a missing runtime import cannot silently create a
+second allocator or independent task-state table.
+
+Each plugin has a partial struct_ops map for libbpf's verifier-target
+resolution. That map is never populated or attached. The loader translates
+the host's selected shadow table to the running kernel's BTF layout, puts
+the selected program FDs into it, then populates and attaches the host map
+once. This avoids cross-object pointers in libbpf's shadow table and keeps
+every selected program associated with only the final table.
+The host is loaded in full, so replaced built-in callbacks are still
+verified even though the composed scheduler does not execute them.
+
+`Loaded` retains all provider objects along with the host. Detachment
+precedes their destruction. `OpsProfiler::sample_loaded()` reports the
+selected callback providers; `sample()` remains available for an individual
+object. Replacing callbacks adds no plugin dispatch to the scheduling path.
+
+Plugins can declare scalar counters as `counter=label:.data.plugin_map` in
+their own manifests. Labels must be unique across providers. Each map must
+be a private, single-entry array with a u32 key and a u64-sized value.
+`Loaded::plugin_counters()` reads them by label, allowing a host to transport
+and display a generic map of counters without knowing any plugin's policy,
+map names or individual fields. `Loaded::plugin_objects()` remains available
+for custom readers. See `scheds/experimental/scx_reevdf/plugins/` for a
+virtual-time borrowing plugin and a VM integration test. There is no runtime
+replacement or plugin initialization protocol yet; restart to change providers.

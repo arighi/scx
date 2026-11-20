@@ -13,6 +13,7 @@ use libbpf_rs::libbpf_sys;
 /// A kfunc of the catalog in scx_rustsched's kfuncs.rs: its name, parameters and
 /// return type, whether a kernel may lack it, and whether it takes a
 /// trailing size parameter on kernels that pass the structure's size.
+#[derive(Clone)]
 pub struct Kfunc {
     pub name: &'static str,
     pub params: &'static [(&'static str, Ty)],
@@ -495,6 +496,93 @@ fn missing_tools(toolchain: &Option<String>) -> Vec<String> {
 /// toolchain that builds the scheduler or the rustup toolchain
 /// BPF_RUST_TOOLCHAIN names, and patch each object's BTF.
 pub fn build(spec: &Spec) {
+    build_objects(spec, None);
+}
+
+/// Build a standalone plugin from the same crate and BTF catalog as its
+/// host. The feature selects #[plugin] in place of #[scheduler]. Objects
+/// are plugin-FEATURE-VARIANT.bpf.o in OUT_DIR.
+pub fn build_plugin(spec: &Spec, feature: &str) {
+    build_objects(spec, Some(feature));
+}
+
+/// Export the built plugin variants in one ar archive, NAME.bpf.a, beside
+/// the executable in Cargo's active profile directory. The archive members
+/// are legacy.bpf.o and sized.bpf.o, selected by the loader before loading.
+/// Empty toolchain placeholders are not exported.
+pub fn export_plugin(spec: &Spec, feature: &str, name: &str) {
+    let output = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+    // Both Cargo layouts, build/pkg-hash/out and build/pkg/hash/out,
+    // sit under the profile directory. This also handles --target,
+    // custom profiles and CARGO_TARGET_DIR without guessing their names.
+    let profile = output
+        .ancestors()
+        .find(|path| path.file_name() == Some(std::ffi::OsStr::new("build")))
+        .and_then(std::path::Path::parent)
+        .expect("OUT_DIR is not under a Cargo build directory");
+    let remove = |path: &std::path::Path| match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => panic!("remove stale plugin {}: {error}", path.display()),
+    };
+    let mut objects = Vec::new();
+    let mut seen = [false; 2];
+    for (variant, sized) in spec.variants {
+        assert!(
+            !seen[usize::from(*sized)],
+            "duplicate plugin topology variant"
+        );
+        seen[usize::from(*sized)] = true;
+        let source = output.join(format!("plugin-{feature}-{variant}.bpf.o"));
+        objects.push((*sized, fs::read(source).expect("read built plugin object")));
+        remove(&profile.join(format!("{name}-{variant}.bpf.o")));
+    }
+    remove(&profile.join(format!("{name}.bpf.o")));
+    let destination = profile.join(format!("{name}.bpf.a"));
+    if objects.is_empty() || objects.iter().any(|(_, bytes)| bytes.is_empty()) {
+        // Never publish a partial archive or retain a stale usable plugin
+        // beside an executable built without BPF tooling.
+        remove(&destination);
+        return;
+    }
+    let mut archive = b"!<arch>\n".to_vec();
+    for (sized, bytes) in objects {
+        archive_member(&mut archive, sized, &bytes);
+    }
+    // Preserve mtimes so tracking unchanged exports does not dirty builds.
+    if fs::read(&destination).ok().as_deref() != Some(archive.as_slice()) {
+        fs::write(&destination, archive).expect("export plugin archive");
+    }
+    println!("cargo:rerun-if-changed={}", destination.display());
+}
+
+/// Deterministic System V ar member: fixed-width ASCII header, followed by
+/// the ELF payload and newline padding to an even boundary. No symbol table
+/// is needed because the loader selects whole objects rather than linking.
+fn archive_member(archive: &mut Vec<u8>, sized: bool, bytes: &[u8]) {
+    let name = if sized {
+        "sized.bpf.o/"
+    } else {
+        "legacy.bpf.o/"
+    };
+    let header = format!(
+        "{name:<16}{:<12}{:<6}{:<6}{:<8}{:<10}`\n",
+        0,
+        0,
+        0,
+        "100644",
+        bytes.len()
+    );
+    assert_eq!(header.len(), 60, "plugin archive member is too large");
+    archive.extend_from_slice(header.as_bytes());
+    archive.extend_from_slice(bytes);
+    if !bytes.len().is_multiple_of(2) {
+        archive.push(b'\n');
+    }
+}
+
+fn build_objects(spec: &Spec, plugin: Option<&str>) {
+    let prefix = plugin.map_or_else(|| "scheduler".to_owned(), |name| format!("plugin-{name}"));
     let bpf = std::path::Path::new(spec.manifest).parent().unwrap();
     println!("cargo:rerun-if-changed={}", spec.manifest);
     println!(
@@ -503,7 +591,9 @@ pub fn build(spec: &Spec) {
     );
     println!("cargo:rerun-if-changed={}", bpf.join("src").display());
     // The loader's source: opts!() declares the tunables from its options.
-    if let Some(scheduler) = bpf.parent() {
+    if let Some(scheduler) = bpf.parent()
+        && scheduler.join("src").is_dir()
+    {
         println!("cargo:rerun-if-changed={}", scheduler.join("src").display());
     }
     println!("cargo:rerun-if-changed={}", spec.catalog);
@@ -539,7 +629,7 @@ pub fn build(spec: &Spec) {
             missing.join(", ")
         );
         for (variant, _) in spec.variants {
-            fs::write(output.join(format!("scheduler-{variant}.bpf.o")), [])
+            fs::write(output.join(format!("{prefix}-{variant}.bpf.o")), [])
                 .expect("write empty BPF object");
         }
         return;
@@ -584,11 +674,14 @@ pub fn build(spec: &Spec) {
         if sized_topology {
             command.args(["--features", "topo_size"]);
         }
+        if let Some(feature) = plugin {
+            command.args(["--features", feature]);
+        }
         let status = command
             .status()
             .expect("run the BPF cargo build; install rust-src and bpf-linker");
         assert!(status.success(), "Rust BPF {variant} build failed");
-        let object = output.join(format!("scheduler-{variant}.bpf.o"));
+        let object = output.join(format!("{prefix}-{variant}.bpf.o"));
         fs::copy(
             output
                 .join("bpf-target")
@@ -601,7 +694,7 @@ pub fn build(spec: &Spec) {
         add_btf(
             spec,
             &object,
-            &output.join(format!("scheduler-{variant}.btf")),
+            &output.join(format!("{prefix}-{variant}.btf")),
             sized_topology,
         );
     }
