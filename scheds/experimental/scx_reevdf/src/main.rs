@@ -280,6 +280,10 @@ struct Opts {
 }
 
 impl Scheduler for Opts {
+    fn plugin_contract(&self) -> Option<&'static str> {
+        Some(include_str!("../plugin.contract"))
+    }
+
     fn settings(&self, params: &mut Params) -> Result<()> {
         // Proxy execution: SCX_OPS_ENQ_BLOCKED hands mutex-blocked donors to
         // ops.enqueue() with SCX_ENQ_BLOCKED. The flag reads as zero on a
@@ -553,7 +557,7 @@ impl Sampler {
         }
     }
 
-    fn metrics(&mut self, object: &Object) -> stats::Metrics {
+    fn metrics(&mut self, object: &Loaded) -> stats::Metrics {
         metrics(
             object,
             &mut self.profiler,
@@ -570,7 +574,7 @@ impl Sampler {
 ///
 /// One sample of the metrics, cumulative since `started`.
 fn metrics(
-    object: &Object,
+    object: &Loaded,
     profiler: &mut OpsProfiler,
     queues: Option<&QueueSampler>,
     balance: Option<&balance::BalanceReader>,
@@ -594,6 +598,7 @@ fn metrics(
         arena_counted: u64::from(arena_bytes.is_some()),
         arena_active_allocs: counter(0).saturating_sub(counter(1)),
         arena_alloc_failures: counter(3),
+        plugin_counters: object.plugin_counters(),
         ..Default::default()
     };
     let mut sis = [0_u8; 16];
@@ -606,7 +611,7 @@ fn metrics(
     m.nr_sis_updates = u64::from_ne_bytes(sis[..8].try_into().unwrap());
     m.sis_scan_sum = u64::from_ne_bytes(sis[8..].try_into().unwrap());
     m.ops = profiler
-        .sample(object)
+        .sample_loaded(object)
         .into_iter()
         .map(|(name, op)| {
             (

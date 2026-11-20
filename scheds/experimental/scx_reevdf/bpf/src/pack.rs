@@ -691,6 +691,47 @@ pub fn place(state: &Context, cid: Cid, limit: u64, nice: u64, now: u64, sleep: 
     true
 }
 
+/// Rebase a queued member before EDQ insertion. The caller holds this CID's
+/// rq lock and has completed placement. Only pack membership is changed;
+/// cgroup load and the empty generation survive. The policy chooses the
+/// coordinate against the reference projected for the task's rejoin.
+#[inline(always)]
+pub(crate) fn rebase(
+    state: &Context,
+    cid: Cid,
+    now: u64,
+    choose: impl FnOnce(crate::VruntimePosition) -> u64,
+) -> bool {
+    let member = state.member().get();
+    if member == 0 || member_cid(member) != cid || !valid(cid) {
+        return false;
+    }
+    let weight = member_weight(member);
+    // unpublish() clears the weight but leaves the cached task handle.
+    if pack(cid).curr_weight().get() != 0
+        && let Some(running) = pack(cid).curr_task().get()
+        && running.address() == state.address()
+    {
+        return false;
+    }
+    let old = state.vtime().get();
+    leave_pack(state, false);
+    let target = choose(crate::VruntimePosition {
+        current: old,
+        reference: reference_for(cid, now, weight),
+        weight,
+        peers: pack(cid).weight().get(),
+    });
+    if target != old {
+        let mut request = state.request();
+        request.rebase(old, target);
+        state.set_request(request);
+        state.vtime().set(target);
+    }
+    join(state, cid, weight);
+    target != old
+}
+
 /// Take the member over to `weight`, the share its cgroup hierarchy now
 /// gives it: it leaves the pack's reference and joins again at the new
 /// weight with its lag carried over, reweight_eevdf(), as fair.c does on

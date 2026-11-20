@@ -3,6 +3,9 @@
 
 use scx_rustsched_build::{KSYM_DOMAIN_POINTER, KSYM_INT, KSYM_RQ, Spec, build, kfuncs};
 
+#[path = "plugins/build.rs"]
+mod plugins;
+
 // The runtime's kfunc catalog, which the BPF crate declares from: here it
 // lists the kfuncs for the build, kfuncs().
 include!("../../../rust/scx_rustsched/kfuncs.rs");
@@ -18,7 +21,7 @@ const KSYM_VARIABLES: [(&std::ffi::CStr, u8, u32); 6] = [
 ];
 
 fn main() {
-    build(&Spec {
+    let spec = Spec {
         package: "scx_reevdf",
         manifest: "bpf/Cargo.toml",
         catalog: "../../../rust/scx_rustsched/kfuncs.rs",
@@ -26,5 +29,7 @@ fn main() {
         kfuncs: kfuncs(),
         ksyms: &KSYM_VARIABLES,
         variants: &[("legacy", false), ("sized", true)],
-    });
+    };
+    build(&spec);
+    plugins::build(&spec);
 }

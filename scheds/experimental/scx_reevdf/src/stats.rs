@@ -174,6 +174,10 @@ pub struct Metrics {
     #[stat(desc = "Kernel BPF run-time statistics are enabled (1) or unavailable (0)")]
     pub ops_profiled: u64,
 
+    #[serde(default)]
+    #[stat(desc = "Counters exported by loaded plugins")]
+    pub plugin_counters: BTreeMap<String, u64>,
+
     #[stat(desc = "Periodic SIS_UTIL scan-budget updates")]
     pub nr_sis_updates: u64,
 
@@ -238,6 +242,16 @@ impl Metrics {
 
         Self {
             elapsed_ns: self.elapsed_ns.saturating_sub(rhs.elapsed_ns),
+            plugin_counters: self
+                .plugin_counters
+                .iter()
+                .map(|(name, value)| {
+                    (
+                        name.clone(),
+                        value.saturating_sub(*rhs.plugin_counters.get(name).unwrap_or(&0)),
+                    )
+                })
+                .collect(),
             nr_sis_updates: self.nr_sis_updates.saturating_sub(rhs.nr_sis_updates),
             sis_scan_sum: self.sis_scan_sum.saturating_sub(rhs.sis_scan_sum),
             ops,
@@ -510,6 +524,11 @@ impl Dashboard {
             m.nr_sis_updates,
             m.sis_avg_scan(),
         )?;
+        for (name, value) in &m.plugin_counters {
+            if *value != 0 {
+                writeln!(w, "plugin {name} {value}")?;
+            }
+        }
         self.balance(w, m)?;
         self.queues(w, m)
     }
